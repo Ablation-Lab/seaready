@@ -79,7 +79,7 @@ function findPluginDir(files, given) {
   const mp = files.get('.claude-plugin/marketplace.json');
   if (mp) {
     try {
-      const j = JSON.parse(mp.data.toString('utf8').replace(/^﻿/, ''));
+      const j = JSON.parse(mp.data.toString('utf8').replace(/^\uFEFF/, ''));
       for (const p of j.plugins || []) {
         if (typeof p.source !== 'string') continue;
         const d = p.source.replace(/^\.\/?/, '').replace(/\/$/, '');
@@ -183,6 +183,7 @@ export function run(opts) {
   const tarBuf = G.archive(repoRoot, commit, { filters });
   const entries = readTar(tarBuf);
   let files = new Map(entries.filter(e => e.type === 'file').map(e => [e.path, { data: e.data, mode: e.mode }]));
+  const archiveFiles = files;
   // Local skew: archive with this machine's config, and the working tree vs the blobs.
   let localArchiveDiff = 0, worktreeDiff = 0;
   const localTar = readTar(G.archive(repoRoot, commit, { local: true, filters }));
@@ -228,7 +229,7 @@ export function run(opts) {
   else notes.push('No private-terms list (.privacy/patterns.txt or --private-terms), so names and other private words were not checked. Add one to catch your real name or project codenames.');
   const listings = loadListings(opts.configDir);
   const ctx = {
-    repoRoot, commit, tree, files, blobs, blobsByPath, pluginDir, attributeTexts, archiveBytes: tarBuf.length,
+    repoRoot, commit, tree, files, archiveFiles, blobs, blobsByPath, pluginDir, attributeTexts, archiveBytes: tarBuf.length,
     localConfig: { autocrlf: G.configGet(repoRoot, 'core.autocrlf'), eol: G.configGet(repoRoot, 'core.eol') },
     localArchiveDiff, worktreeDiff, remote, ownRepoKey: remote?.ownerRepo ? `github.com/${remote.ownerRepo.toLowerCase()}` : null,
     listings, identities, addedLines, privateTerms,

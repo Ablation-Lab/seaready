@@ -131,7 +131,8 @@ export function checkLayout(ctx, F) {
 // ---------------------------------------------------------------------------------------------
 // .gitattributes and line endings, compared on a real git archive
 export function checkLineEndings(ctx, F) {
-  const { files, blobsByPath, pluginDir, localConfig, localArchiveDiff, worktreeDiff } = ctx;
+  const { blobsByPath, pluginDir, localConfig, localArchiveDiff, worktreeDiff } = ctx;
+  const files = ctx.archiveFiles || ctx.files; // always the GitHub-like archive, even in --worktree mode
   const attrFiles = [...ctx.attributeTexts.keys()];
   const textAttrs = [];
   for (const p of attrFiles) {
@@ -263,7 +264,7 @@ export function checkManifest(ctx, F) {
   }
   if (m.homepage) { try { new URL(m.homepage); } catch { F.add('FAIL', 'MANIFEST-URLS', 'homepage is not a valid URL', { file: pj, detail: 'Claude Code refuses to load the plugin.' }); } }
   // Icon.
-  if (!m.icon) F.add('WARN', 'ICON', 'No icon in plugin.json', { file: pj, fix: 'Add a square PNG (512×512 works) inside the plugin and set "icon": "./.claude-plugin/icon.png".' });
+  if (!m.icon) F.add('WARN', 'ICON', 'No icon in plugin.json', { file: pj, fix: 'Add a square PNG (512×512 works) inside the plugin folder and set "icon" to its path, starting with "./".' });
   else {
     const ip = joinPath(pluginDir, m.icon);
     const icon = files.get(ip);
@@ -538,11 +539,15 @@ export function checkReadme(ctx, F) {
   if (ex.prompts.length >= 3) F.add('PASS', 'PROMPTS', `${ex.prompts.length} example prompts found`, { file: p, line: ex.line, policy: '3E', detail: ex.prompts.slice(0, 5).map(x => `• ${x}`).join('\n') });
   else F.add('FAIL', 'PROMPTS', `Fewer than 3 example prompts found (${ex.prompts.length})`, { file: p, line: ex.line || undefined, policy: '3E', detail: ex.heading ? `Under "${ex.heading}".` : 'No heading like "Example prompts" was found.', fix: 'Add an "Example prompts" section with at least three prompts in a code block, each tested on the sample data.' });
   // Sample / test data (3D).
-  const sampleDirs = [...new Set([...files.keys()].filter(f => f.startsWith(base)).map(f => f.slice(base.length)).filter(f => /(^|\/)(samples?|examples?|fixtures|test-?data|demo)\//i.test(f)).map(f => f.split('/').slice(0, f.split('/').findIndex(s => /^(samples?|examples?|fixtures|test-?data|demo)$/i.test(s)) + 1).join('/')))];
+  // Sample folders count anywhere in the repo: reviewers work from a clone, and keeping planted
+  // problems out of the plugin folder keeps them out of the directory's scan.
+  const SAMPLE_DIR = /^(samples?|examples?|fixtures|test-?data|demo)$/i;
+  const sampleDirs = [...new Set([...files.keys()].filter(f => !/(^|\/)(node_modules|\.git)\//.test(f)).map(f => { const parts = f.split('/'); const k = parts.findIndex(s => SAMPLE_DIR.test(s)); return k >= 0 && k < parts.length - 1 ? parts.slice(0, k + 1).join('/') : null; }).filter(Boolean))].slice(0, 6);
   const sampleSec = hs.find(x => /sample|for reviewers|test (account|data|setup)|try it|demo/i.test(x.text));
   readme.sampleDirs = sampleDirs; readme.sampleSection = sampleSec?.text || null;
+  if (sampleDirs.length && sampleDirs.every(d => base && !d.startsWith(base))) F.add('INFO', 'SAMPLE', 'Sample data is outside the plugin folder', { detail: `${sampleDirs.join(', ')}. Reviewers can use it from a clone; people who install the plugin won't have it. Say so in the README.`, policy: '3D' });
   if (sampleDirs.length && sampleSec) F.add('PASS', 'SAMPLE', 'Sample data and a README section about it', { detail: `${sampleDirs.join(', ')}; "${sampleSec.text}"`, policy: '3D' });
-  else if (sampleDirs.length || sampleSec) F.add('WARN', 'SAMPLE', sampleDirs.length ? 'Sample data found, but no README section tells reviewers how to use it' : 'README mentions samples or reviewers, but no sample folder is in the plugin', { file: p, policy: '3D', detail: sampleDirs.join(', ') || sampleSec.text, fix: 'Add a "Try it with the sample" or "For reviewers" section that names the files and what a run should show.' });
+  else if (sampleDirs.length || sampleSec) F.add('WARN', 'SAMPLE', sampleDirs.length ? 'Sample data found, but no README section tells reviewers how to use it' : 'README mentions samples or reviewers, but no sample folder is in the repo', { file: p, policy: '3D', detail: sampleDirs.join(', ') || sampleSec.text, fix: 'Add a "Try it with the sample" or "For reviewers" section that names the files and what a run should show.' });
   else F.add('WARN', 'SAMPLE', 'No sample or test data for reviewers', { file: p, policy: '3D', detail: 'Policy 3D asks for a testing account with sample data. For a local tool, ship a small sample (or a script that makes one) and say what a run reports.', fix: 'Add samples/ and a "For reviewers" section.' });
   // Docs traps from history.
   const plain = text;
@@ -563,7 +568,7 @@ export function checkReadme(ctx, F) {
   }
   for (const m of stripCode(text).matchAll(/`([^`\n]+\.(png|jpe?g|gif|webp|svg|ttf|otf|woff2?))`/gi))
     if (bundled(m[1])) F.add('WARN', 'ASSET-REF', 'Bundled image or font path in backticks', { file: p, line: lineOf(text, m.index), detail: m[1], portal: 'Held for a reviewer' });
-  if (/\b(official (anthropic|claude)|by anthropic|endorsed by anthropic|anthropic['’]s official)\b/i.test(text) && !/\bunofficial\b|not (affiliated|endorsed)/i.test(text))
+  if (/\b(official (anthropic|claude)|by anthropic|endorsed by anthropic|anthropic['’]s official)\b/i.test(text) && !/\bunofficial\b|\bnot (made|built|affiliated|endorsed|sponsored|associated)\b|\bindependent project\b/i.test(text))
     F.add('WARN', 'OFFICIAL', 'README could read as an official Anthropic product', { file: p, fix: 'Add a one-line note that this is an independent project, not made or endorsed by Anthropic.' });
   return readme;
 }
@@ -608,7 +613,7 @@ export function checkCode(ctx, F, readme) {
         }
         if (R.SHELL_EXT.test(p) && /\$'[^']*\\[nrt]/.test(line)) F.add('INFO', 'ANSI-C', 'ANSI-C quoting ($\'…\')', { file: p, line: ln, detail: 'Both Ablation Lab privacy checks swapped this for printf -v while clearing directory holds. Harmless, but reads as obfuscated to some scanners.' });
         const cl = line.match(R.CREDENTIAL_LOOKALIKE);
-        if (cl) F.add('WARN', 'CREDENTIAL-NAME', `Identifier that looks like a credential: ${cl[0]}`, { file: p, line: ln, portal: 'Held for a reviewer ("Uses a credential from the user\'s machine")', detail: 'Lore Lookup (LOCK_TOKEN) and Cutproof (TokA/TokB, $key) were held for names like this; renaming cleared it.', fix: 'Rename it to say what it is (e.g. lockId).' });
+        if (cl) F.add('WARN', 'CREDENTIAL-NAME', `Identifier that looks like a credential: ${cl[0]}`, { file: p, line: ln, portal: 'Held for a reviewer ("Uses a credential from the user\'s machine")', detail: 'Lore Lookup (a lock ID) and Cutproof (short token-counting names) were held for names like this; renaming cleared it. See reference/lessons.md.', fix: 'Rename it to say what it is (e.g. lockId).' });
         if (!isTest) for (const re of R.ENV_READ) {
           if (re.source.startsWith('%') && !R.BATCH_EXT.test(p)) continue;
           if (re === R.ENV_READ[R.ENV_READ.length - 1] && !R.SHELL_EXT.test(p)) continue;
@@ -640,7 +645,7 @@ export function checkCode(ctx, F, readme) {
         if (/^(example\.(com|org|net)|localhost|127\.0\.0\.1|schemas?\.[a-z.]+|json-schema\.org|www\.w3\.org)$/.test(h)) continue;
         if (!hosts.has(h)) hosts.set(h, { file: p, line: ln });
       }
-      for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(line)) chatHits.push({ file: p, line: ln, what, sev, text: trimmed.slice(0, 140), instr });
+      if (isCode) for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(line)) chatHits.push({ file: p, line: ln, what, sev, text: trimmed.slice(0, 140), instr });
     });
   }
   // Environment variable reads.
@@ -648,7 +653,7 @@ export function checkCode(ctx, F, readme) {
   for (const r of envReads) { if (!byName.has(r.name)) byName.set(r.name, []); byName.get(r.name).push(r); }
   for (const [name, rs] of byName) {
     const at = `${rs[0].file}:${rs[0].line}` + (rs.length > 1 ? ` (+${rs.length - 1} more)` : '');
-    if (R.ENV_CREDENTIAL.test(name)) F.add('WARN', 'ENV-CREDENTIAL', `Reads a credential-like environment variable: ${name}`, { file: rs[0].file, line: rs[0].line, detail: at, portal: 'Held for a reviewer ("Uses a credential from the user\'s machine"); blocks for an HTTP hook that sends it', fix: 'Ask for it through a userConfig entry with sensitive: true.' });
+    if (R.ENV_SENSITIVE_NAME.test(name)) F.add('WARN', 'ENV-CREDENTIAL', `Reads a credential-like environment variable: ${name}`, { file: rs[0].file, line: rs[0].line, detail: at, portal: 'Held for a reviewer ("Uses a credential from the user\'s machine"); blocks for an HTTP hook that sends it', fix: 'Ask for it through a userConfig entry with sensitive: true.' });
     else if (R.ENV_PATHLIKE.test(name)) F.add('WARN', 'ENV-PATH', `Finds a folder through an environment variable: ${name}`, { file: rs[0].file, line: rs[0].line, detail: at + '. Cutproof cleared a hold by switching to [Environment]::GetFolderPath; in Node use os.homedir()/os.tmpdir().', fix: 'Use the platform API for known folders.' });
     else F.add('WARN', 'ENV-OTHER', `Reads environment variable ${name}`, { file: rs[0].file, line: rs[0].line, detail: at + '. A setting read from the environment (SessionKeeper\'s SESSIONKEEPER_EXE) was part of what the scan held; prefer a fixed location or userConfig, and document it.', fix: 'Document it in the README, or replace it with userConfig.' });
   }
@@ -684,7 +689,8 @@ export function checkCode(ctx, F, readme) {
     const comp = { chat: [], effects: {} };
     for (const [p, f] of files) {
       if (p.startsWith(base) || R.TEST_PATH.test(p) || !R.CODE_EXT.test(p) || !isText(f.data)) continue;
-      if (/(^|\/)(\.githooks|scripts\/privacy-check)/.test(p)) continue;
+      // Maintainer hooks and sample generators aren't started by the plugin.
+      if (/(^|\/)(\.githooks|scripts\/privacy-check|samples?\/|examples?\/|demo\/)/.test(p)) continue;
       f.data.toString('utf8').split('\n').forEach((line, i) => {
         if (/^\s*(\/\/|#|\*)/.test(line)) return;
         for (const [re, what, sev] of R.CHAT_HISTORY) if (sev === 'FAIL' && re.test(line)) comp.chat.push({ file: p, line: i + 1, what, text: line.trim().slice(0, 120) });
@@ -709,8 +715,13 @@ export function checkCode(ctx, F, readme) {
     const sev = mentioned ? 'INFO' : (['registry', 'shortcut', 'autostart', 'claude-config', 'network', 'home-files'].includes(eff.id) ? 'FAIL' : 'WARN');
     F.add(sev, 'DISCLOSE', `${mentioned ? 'Disclosed' : 'Not found in the README'}: ${eff.label}`, { file: ev[0].file, line: ev[0].line, policy: '2B, 3C', detail: ev.slice(0, 4).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n') + (ev.length > 4 ? `\n(+${ev.length - 4} more)` : ''), portal: mentioned ? null : 'Security scan ("does something the README doesn\'t disclose")', fix: mentioned ? 'Check the README describes this accurately (where, when, how to undo).' : `Describe it in the README's "What it runs, reads and writes" section, or remove it.` });
   }
+  // A host in a file that also makes requests (or in instructions Claude follows) may be contacted;
+  // a host anywhere else is probably a link in a message.
+  const netFiles = new Set(evidence.network.map(e => e.file));
   for (const [h, at] of hosts) {
-    if (!rtext.toLowerCase().includes(h)) F.add('WARN', 'DISCLOSE-HOST', `Host ${h} in the code isn't named in the README`, { file: at.file, line: at.line, policy: '2B, 3F', detail: 'List every domain the plugin contacts or tells Claude to fetch.', portal: 'Security scan ("Sends data to an undisclosed destination") if contacted' });
+    if (rtext.toLowerCase().includes(h)) continue;
+    const maybeContacted = netFiles.has(at.file) || isInstr(at.file);
+    F.add(maybeContacted ? 'WARN' : 'INFO', 'DISCLOSE-HOST', `Host ${h} in the ${maybeContacted ? 'code' : 'text of a message or link'} isn't named in the README`, { file: at.file, line: at.line, policy: '2B, 3F', detail: maybeContacted ? 'List every domain the plugin contacts or tells Claude to fetch.' : 'No request code in this file, so it is probably a link; check it isn\'t contacted.', portal: maybeContacted ? 'Security scan ("Sends data to an undisclosed destination") if contacted' : null });
   }
   for (const nc of R.NEGATIVE_CLAIMS) {
     const m = rtext.match(nc.re);
@@ -775,7 +786,7 @@ export function checkPersonal(ctx, F) {
       if (!emailHits.has(k)) emailHits.set(k, { file: p, line: lineOf(text, m.index), email: e });
     }
     const lp = text.match(R.LOCAL_USER_PATH);
-    if (lp) F.add('WARN', 'LOCAL-PATH', 'Path with a local user name', { file: p, line: lineOf(text, lp.index), detail: lp[0].replace(/(Users[\\/]+|home\/)([^\\/]{2})[^\\/]*/i, '$1$2…'), fix: 'Use a placeholder like C:\\Users\\<you> or ~.' });
+    if (lp) F.add(R.TEST_PATH.test(p) ? 'INFO' : 'WARN', 'LOCAL-PATH', 'Path with a local user name', { file: p, line: lineOf(text, lp.index), detail: lp[0].replace(/(Users[\\/]+|home\/)([^\\/]{2})[^\\/]*/i, '$1$2…'), fix: 'Use a placeholder like C:\\Users\\<you> or ~.' });
     for (const t of privateTerms) {
       const m = text.match(t.re);
       if (m) F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: lineOf(text, m.index), detail: `${t.source} (${t.file})`, fix: 'Remove it.' });

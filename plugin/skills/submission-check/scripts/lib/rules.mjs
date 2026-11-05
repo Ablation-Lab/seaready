@@ -62,7 +62,7 @@ export const SECRET_SHAPES = [
 ];
 
 // Names that only look like credentials. The directory's scan held two of our plugins for these
-// (LOCK_TOKEN, TokA/TokB, $key); renaming cleared the hold. WARN only.
+// (a lock ID and some short token-counting names); renaming cleared the hold. WARN only.
 export const CREDENTIAL_LOOKALIKE = /\b[A-Za-z_$][A-Za-z0-9_]*(TOKEN|Token|SECRET|Secret|PASSWORD|Password|PASSWD|Passwd|APIKEY|ApiKey|API_KEY|apiKey|api_key|CREDENTIAL|Credential|PRIVATE_KEY|privateKey)[A-Za-z0-9_]*\b|\$(key|token|secret|password|pass|cred)\b|\bTok[A-Z]\b/;
 
 // Reads of environment variables. Credential-like names are the "Uses a credential from the user's
@@ -78,7 +78,7 @@ export const ENV_READ = [
   // Shell scripts: $NAME / ${NAME} for upper-case names (lower-case ones are usually local variables).
   /\$\{?([A-Z][A-Z0-9_]{2,})\}?/g,
 ];
-export const ENV_CREDENTIAL = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH)/i;
+export const ENV_SENSITIVE_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH)/i;
 export const ENV_PATHLIKE = /^(APPDATA|LOCALAPPDATA|USERPROFILE|HOMEPATH|HOMEDRIVE|HOME|ProgramFiles|ProgramFiles\(x86\)|ProgramData|SystemRoot|windir|TEMP|TMP|XDG_[A-Z_]+)$/i;
 // Variables Claude Code sets for plugins and skills: fine to read.
 export const ENV_ALLOWED = /^(CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|CLAUDE_SKILL_DIR|CLAUDE_PROJECT_DIR|CLAUDE_CONFIG_DIR|PATH|PATHEXT|NODE_ENV|CI)$/;

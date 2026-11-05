@@ -8,7 +8,7 @@ import { run } from '../plugin/skills/submission-check/scripts/check.mjs';
 import { repo, configDir, cleanPlugin, ids, tmpDir, write, git } from './helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pluginRoot = path.join(here, '..', 'plugin');
+const repoRoot = path.join(here, '..');
 const check = (root, extra = {}) => run({ repo: root, ref: 'HEAD', out: tmpDir('tollgate-out-'), worktree: false, privateTerms: null,
   configDir: extra.configDir ?? configDir(), validate: false, quiet: true, pluginPath: extra.pluginPath ?? null });
 
@@ -88,9 +88,9 @@ test('plugin in a subfolder is found from marketplace.json; companion code is sc
 
 test('the sample reports everything in expected-results.md', () => {
   const dir = path.join(tmpDir(), 'sample');
-  execFileSync(process.execPath, [path.join(pluginRoot, 'samples', 'make-sample.mjs'), dir], { stdio: 'pipe' });
+  execFileSync(process.execPath, [path.join(repoRoot, 'samples', 'make-sample.mjs'), dir], { stdio: 'pipe' });
   const res = check(dir);
-  const md = fs.readFileSync(path.join(pluginRoot, 'samples', 'expected-results.md'), 'utf8');
+  const md = fs.readFileSync(path.join(repoRoot, 'samples', 'expected-results.md'), 'utf8');
   const sections = { FAIL: md.split('## FAIL')[1].split('## WARN')[0], WARN: md.split('## WARN')[1] };
   for (const [sev, text] of Object.entries(sections)) {
     const want = [...text.matchAll(/^\| ([A-Z0-9-]+) \|/gm)].map(m => m[1]).filter(x => x !== 'Check');

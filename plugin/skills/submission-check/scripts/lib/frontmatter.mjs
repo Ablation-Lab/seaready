@@ -7,7 +7,7 @@
 // It also notes " #" in a plain value, which YAML treats as the start of a comment.
 
 export function splitFrontmatter(text) {
-  const t = text.replace(/^﻿/, '');
+  const t = text.replace(/^\uFEFF/, '');
   const m = t.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
   if (!m) return null;
   const startLine = 2;

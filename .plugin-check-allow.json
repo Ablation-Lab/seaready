@@ -1,0 +1,9 @@
+[
+  { "id": "PERMISSIONS", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "The line is the regular expression that looks for permission changes in other plugins; Tollgate never changes settings." },
+  { "id": "CHAT-HISTORY", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "Finding messages that name the chat-history locations Tollgate looks for; it never reads them." },
+  { "id": "INJECTION", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection pattern for shell: true, not a call." },
+  { "id": "ENV-PATH", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that mention environment variables; Tollgate reads only PATH (to find git and claude)." },
+  { "id": "ENV-OTHER", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that mention environment variables." },
+  { "id": "DISCLOSE", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns for side effects; rules.mjs only describes what to look for." },
+  { "id": "CLAIM-CHECK", "match": "makes no network", "reason": "The only network-request matches are the detection patterns in rules.mjs; Tollgate makes no requests." }
+]

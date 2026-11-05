@@ -2,7 +2,7 @@
 
 `make-sample.mjs` builds a two-commit plugin repo called Claude Helper with these problems planted. Running the check on it should end with **NOT READY** and exit code 1. The repo has no GitHub remote, so a `GIT-REMOTE` warning is expected too.
 
-The test in `test/sample.test.mjs` (in the repository, outside the plugin folder) runs the sample and fails if any line below stops being reported.
+The test in `test/repos.test.mjs` runs the sample and fails if any line below stops being reported.
 
 ## FAIL
 

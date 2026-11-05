@@ -19,7 +19,7 @@ Or copy `plugin/skills/submission-check` into `~/.claude/skills/` to use it as a
 |---|---|
 | `plugin/` | the plugin folder (Plugin path `plugin` in the directory portal) |
 | `plugin/skills/submission-check/` | the skill: `SKILL.md`, `scripts/check.mjs` and its modules, reference notes |
-| `plugin/samples/` | the sample maker and its expected results |
+| `samples/` | the sample maker and its expected results (outside the plugin folder, so its planted problems never ship) |
 | `.claude-plugin/marketplace.json` | lets Claude Code install the plugin from this repo |
 | `test/` | tests, run with `node --test` (not part of the plugin) |
 | `scripts/privacy-check.sh`, `.githooks/` | the maintainer's pre-commit privacy check; the plugin never runs it |

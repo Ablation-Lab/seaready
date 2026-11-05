@@ -37,10 +37,10 @@ Claude runs the checks, then reads the code the findings point at to judge the t
 
 ## Try it with the sample (for reviewers)
 
-There's no account to set up: Tollgate runs locally. The sample is a plugin repo with problems planted in it, made by a script so this repository stays clean. With Node.js 18 or later and git, from a clone of this repository:
+There's no account to set up: Tollgate runs locally. The sample is a plugin repo with problems planted in it. A script makes it, and the script lives in the repository's `samples` folder, outside the plugin folder, so the planted problems never ship with the plugin. With Node.js 18 or later and git, from a clone of this repository:
 
 ```
-node plugin/samples/make-sample.mjs
+node samples/make-sample.mjs
 ```
 
 It prints the path of a new folder under your temp folder holding a two-commit git repo called Claude Helper. Then ask Claude:
@@ -49,7 +49,7 @@ It prints the path of a new folder under your temp folder holding a two-commit g
 Run the submission check on <the folder it printed>
 ```
 
-The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code transcripts, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](samples/expected-results.md) lists everything it should report.
+The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code transcripts, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](https://github.com/Ablation-Lab/tollgate/blob/main/samples/expected-results.md) lists everything it should report.
 
 ## What it runs, reads and writes
 
