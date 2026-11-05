@@ -278,7 +278,7 @@ export function checkManifest(ctx, F) {
     const v = m[k];
     if (v != null && typeof v !== 'string' && typeof v !== 'object') F.add('FAIL', 'MANIFEST-TYPE', `"${k}" in plugin.json must be a path, a list or an object`, { file: pj, detail: `It is ${typeof v}.`, portal: 'Blocks (schema)' });
     const paths = typeof v === 'string' ? [v] : Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
-    for (const p of paths) if (/^(\.\.[\\/]|\/|[A-Za-z]:)/.test(p) || /[\\/]\.\.[\\/]/.test(p)) F.add('FAIL', 'MANIFEST-PATH', `${k} path points outside the plugin folder`, { file: pj, detail: p, portal: 'Blocks' });
+    for (const p of paths) if (escapesPlugin(p)) F.add('FAIL', 'MANIFEST-PATH', `${k} path points outside the plugin folder`, { file: pj, detail: p, portal: 'Blocks' });
   }
   if (m.hooks === './hooks/hooks.json' || (Array.isArray(m.hooks) && m.hooks.includes('./hooks/hooks.json')))
     F.add('WARN', 'MANIFEST-HOOKS', 'hooks/hooks.json is listed in plugin.json', { file: pj, detail: 'Claude Code loads it automatically; listing it again is a warning.', portal: 'Warning' });
@@ -366,6 +366,14 @@ function checkOwnUrl(url, k, remote, file, F, ctx) {
 }
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// True if a plugin-relative path leaves the plugin folder: ../x, ./../x, sub/../../x, /x, C:x.
+export function escapesPlugin(p) {
+  const s = String(p).replace(/\\/g, '/');
+  if (/^(\/|[A-Za-z]:)/.test(s)) return true;
+  let depth = 0;
+  for (const seg of s.split('/')) { if (seg === '..') { if (--depth < 0) return true; } else if (seg && seg !== '.') depth++; }
+  return false;
+}
 export function joinPath(dir, p) {
   const parts = (dir ? dir.split('/') : []);
   for (const seg of p.replace(/\\/g, '/').split('/')) { if (!seg || seg === '.') continue; if (seg === '..') parts.pop(); else parts.push(seg); }
@@ -413,7 +421,7 @@ export function checkComponents(ctx, F) {
   const addMcp = r => { if (r) out.mcp = [...(out.mcp || []), ...r]; };
   for (const s of [...out.skills, ...out.commands, ...out.agents]) if (s.hooks) addHooks(s.hooks);
   for (const h of asList(m.hooks)) {
-    if (typeof h === 'string' && /^(\.\.[\\/]|[\\/]|[A-Za-z]:)/.test(h)) continue;   // outside the plugin: MANIFEST-PATH reports it
+    if (typeof h === 'string' && escapesPlugin(h)) continue;   // outside the plugin: MANIFEST-PATH reports it
     if (typeof h === 'string') {
       const hp = joinPath(pluginDir, h);
       if (hp === hooksPath || (base && !hp.startsWith(base))) continue;   // outside the plugin: MANIFEST-PATH reports it
@@ -477,7 +485,10 @@ function frontmatterHooks(p, fm, F) {
   if (/^\s*[{[]/.test(raw)) { try { obj = JSON.parse(raw.replace(/\s*\n\s*/g, ' ')); } catch { obj = null; } }
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { hooks: checkHooks(`${p} (front matter hooks)`, JSON.stringify(obj.hooks || obj.modules ? obj : { hooks: obj }), F, false) };
   F.add('WARN', 'HOOKS', 'Hooks in front matter that this check can\'t fully read', { file: p, line: fm.lines.hooks, detail: 'Claude Code runs these while the skill is active. Their text was still scanned for commands, hosts and file writes; read them in the judgement step.' });
-  return { hooksRaw: raw };
+  // Still check what we can line by line: launchers in "command:" lines, and HTTP hook URLs.
+  for (const m of raw.matchAll(/^\s*(?:-\s*)?command:\s*(.+)$/gm)) launcherFinding(m[1].replace(/^["']|["']$/g, ''), 'hook in front matter', p, F);
+  const httpUrls = /\btype:\s*["']?http\b/.test(raw) ? [...raw.matchAll(/\burl:\s*["']?(https?:\/\/[^\s"']+)/g)].map(m => m[1]) : [];
+  return { hooksRaw: raw, hooksHttp: httpUrls };
 }
 
 export function checkSkill(p, text, F) {
@@ -547,14 +558,34 @@ function checkInstructionBody(p, body, startLine, F) {
 // Package launchers (npx, uvx, bunx, pnpm dlx, yarn dlx, pipx run, uv run): unpinned blocks,
 // pinned is held. Returns true if the command uses one.
 function launcherFinding(cmd, what, file, F) {
-  // Spaces collapsed and .cmd/.exe dropped, so "npm  exec" and "npm.cmd exec" read as "npm exec".
-  // Also: any case (NPX), a version on the tool (yarn@1), and options before the subcommand
-  // (npm --yes exec, pnpm --silent dlx).
-  const c = cmd.replace(/\s+/g, ' ').replace(/\b(npm|pnpm|yarn|npx|pnpx|bunx?|uvx?|pipx|deno)(@\S+)?\.(cmd|exe)\b/gi, '$1');
-  const lc = c.toLowerCase().replace(/\b(npm|pnpm|yarn|bun)@\S+/g, '$1');
-  const OPTS = '(?: -{1,2}[\\w-]+(?:=\\S+)?)*';
-  const launcher = new RegExp(`(^|[\\s/\\\\;&|(])(npx|pnpx|uvx|bunx)(\\s|$)|\\b(npm|pnpm|yarn)${OPTS} (exec|x|dlx)\\b|\\bbun${OPTS} x\\b|\\bpipx${OPTS} run\\b|\\buv${OPTS} (run|tool run)\\b|\\bdeno${OPTS} run\\b.*\\b(npm|jsr|https?):`);
-  if (!launcher.test(lc)) return false;
+  // Token by token (no regex that can backtrack on a long command). Quotes and backticks are
+  // treated as spaces, so bash -c 'npx x' and `npx x` are seen; command separators split words;
+  // tool names are read without case, path, version (yarn@1) or .cmd/.exe.
+  const c = String(cmd).slice(0, 8192).replace(/\s+/g, ' ');
+  const raw = c.toLowerCase().replace(/["'`();&|]/g, ' ').split(' ').filter(Boolean);
+  // Tool names without a path, a version (yarn@1) or .cmd/.exe; other words stay as written.
+  const words = raw.map(w => (/^[a-z]+:/.test(w) ? w : w.replace(/^.*[\\/]/, '').replace(/^([a-z]+)@[^@]*$/, '$1').replace(/\.(cmd|exe)$/, '')));
+  const VALUE_OPTS = new Set(['--prefix', '-c', '--dir', '--cwd', '--workspace', '-w', '--filter', '-f', '--registry', '--cache', '-p', '--package']);
+  const SUBS = { npm: ['exec', 'x'], pnpm: ['exec', 'dlx'], yarn: ['exec', 'dlx'], bun: ['x'], pipx: ['run'], uv: ['run', 'tool'], deno: ['run'] };
+  // The first word after the tool that isn't an option (or an option's value).
+  const subAfter = i => {
+    for (let j = i + 1; j < words.length; j++) {
+      if (words[j].startsWith('-')) { if (VALUE_OPTS.has(words[j]) && !words[j].includes('=')) j++; continue; }
+      return j;
+    }
+    return -1;
+  };
+  let found = false;
+  for (let i = 0; i < words.length && !found; i++) {
+    const w = words[i];
+    if (['npx', 'pnpx', 'uvx', 'bunx'].includes(w)) { found = true; break; }
+    if (!SUBS[w]) continue;
+    const j = subAfter(i);
+    if (j < 0 || !SUBS[w].includes(words[j])) continue;
+    if (w === 'deno') { if (raw.slice(j + 1).some(x => /^(npm|jsr|https?):/.test(x))) found = true; continue; }
+    found = true;
+  }
+  if (!found) return false;
   // Pinned means the package itself has an exact version (an option like --tag=x@1.0.0 doesn't count).
   const pinned = c.split(' ').some(t => !t.startsWith('-') && /[^@\s]@\d+\.\d+\.\d+$|==\d+\.\d+\.\d+$/.test(t)) || /\s--(locked|frozen)\b/.test(c);
   F.add(pinned ? 'WARN' : 'FAIL', 'LAUNCHER', pinned ? `${what} runs a pinned package from a registry` : `${what} runs an unpinned package`, { file, detail: c, portal: pinned ? 'Held for a reviewer ("Runs a pinned npx or uvx package")' : 'Blocks ("Unpinned npx/uvx launcher")', fix: pinned ? 'Bundle the package\'s code to avoid the hold.' : 'Pin an exact version (pkg@1.2.3, pkg==1.2.3) or use uv run --locked.' });
@@ -747,12 +778,19 @@ export function checkCode(ctx, F, readme) {
   const bundledImages = new Set([...files.keys()].filter(f => f.startsWith(base) && R.IMAGE_EXT.test(f)).map(f => f.split('/').pop().toLowerCase()));
   // Files a hook, MCP or LSP command runs are code whatever their name: hooks/start, bin/tool.
   const c0 = ctx.components || {};
-  const cmdTexts = [...(c0.hooks?.commands || []).map(c => c.command), ...[...(c0.mcp || []), ...(c0.lsp || [])].map(s => [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' '))];
+  const cmdTexts = [...(c0.hooks?.commands || []).map(c => c.command), ...[...(c0.mcp || []), ...(c0.lsp || [])].map(s => [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' ')),
+    ...[...(c0.skills || []), ...(c0.commands || []), ...(c0.agents || [])].map(s => s.hooksRaw || "")];
   const runFiles = new Set();
-  for (const t of cmdTexts) for (const m of String(t).matchAll(/\$\{?CLAUDE_PLUGIN_ROOT\}?[\\/]+([^\s"'`;|&)]+)|(?:^|\s)\.?[\\/]?((?:[\w.-]+[\\/])*[\w.-]+)(?=\s|$)/g)) {
-    const rel = (m[1] || m[2] || '').replace(/\\/g, '/').replace(/^\.\//, '');
-    if (rel && files.has(base + rel)) runFiles.add(base + rel);
-  }
+  const addRun = (dir, t) => {
+    // Quotes don't change which file runs: bash "${CLAUDE_PLUGIN_ROOT}"/hooks/start.
+    for (const m of String(t).replace(/["'`]/g, '').slice(0, 20000).matchAll(/\$\{?CLAUDE_(?:PLUGIN_ROOT|SKILL_DIR)\}?[\\/]+([^\s;|&)]+)|(?:^|\s)\.?[\\/]?((?:[\w.-]+[\\/])*[\w.-]+)(?=\s|$)/g)) {
+      const rel = (m[1] || m[2] || '').replace(/\\/g, '/').replace(/^\.\//, '');
+      for (const cand of [dir + rel, base + rel]) if (rel && files.has(cand)) runFiles.add(cand);
+    }
+  };
+  for (const t of cmdTexts) addRun(base, t);
+  // Scripts a SKILL.md tells Claude to run, relative to the skill's own folder (${CLAUDE_SKILL_DIR}).
+  for (const [p, f] of files) if (p.startsWith(base) && /(^|\/)SKILL\.md$/.test(p)) addRun(p.slice(0, p.lastIndexOf('/') + 1), f.data.toString('utf8').split('\n').filter(l => /CLAUDE_SKILL_DIR/.test(l)).join('\n'));
   for (const [p, f] of files) {
     if (!p.startsWith(base) || !isText(f.data)) continue;
     const isCode = R.CODE_EXT.test(p) || runFiles.has(p) || (f.data[0] === 0x23 && f.data[1] === 0x21);   // or starts with #!
@@ -829,7 +867,7 @@ export function checkCode(ctx, F, readme) {
       if (!codeText) return;
       for (const eff of R.SIDE_EFFECTS) if (eff.code.test(codeText)) {
         // A home-folder path usually goes into a variable and is written a line or two later.
-        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 11).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
+        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 21).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
         evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140), allowed: patternData, nearWrite });
       }
       for (const m of codeText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
@@ -844,7 +882,10 @@ export function checkCode(ctx, F, readme) {
   const comp = ctx.components || {};
   const cfg = [];
   for (const c of comp.hooks?.commands || []) cfg.push({ file: c.file, text: c.command, what: `${c.http ? 'HTTP hook' : 'hook'} (${c.event})`, remote: !!c.remote });
-  for (const list of [comp.skills, comp.agents]) for (const s of list || []) if (s.hooksRaw) cfg.push({ file: s.path, text: s.hooksRaw, what: 'hooks in front matter' });
+  for (const list of [comp.skills, comp.commands, comp.agents]) for (const s of list || []) {
+    if (s.hooksRaw) cfg.push({ file: s.path, text: s.hooksRaw, what: 'hooks in front matter' });
+    for (const u of s.hooksHttp || []) cfg.push({ file: s.path, text: u, what: 'HTTP hook in front matter', remote: true });
+  }
   for (const list of [comp.mcp, comp.lsp]) for (const s of list || []) {
     if (typeof s.command === 'string') cfg.push({ file: s.file, text: [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' '), what: `${list === comp.lsp ? 'LSP' : 'MCP'} server ${s.name}` });
     if (typeof s.url === 'string' && s.url) cfg.push({ file: s.file, text: s.url, what: `MCP server ${s.name} (remote)`, remote: true });
@@ -970,17 +1011,23 @@ export function checkCode(ctx, F, readme) {
 // "makes no network requests" and "never sends anything" don't disclose network use.
 // A denial after the match counts too: "Network: none", "| Network requests | None |".
 export function disclosed(re, text) {
-  const DENY = /\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor|n\/a|zero|disabled|unused|offline|local[- ]only|isolated|nil|nope|absent)\b|❌|✗|✘|🚫/i;
-  const DENY_AFTER = /^[\w ]{0,25}?[\s:|()[\]\-–—]*(\b(none|no|nothing|never|n\/a|zero|0|disabled|off|not|unused|offline|local[- ]only|isolated|nil|nope|absent)\b|\bn\.a\.|❌|✗|✘|🚫)/i;
-  return visibleText(text).split(/(?<=[.!?])\s+|\n/).some(raw => {
-    // Formatting doesn't change the meaning. (A single ~ is kept: it's the home folder in ~/x.)
-    const s = raw.replace(/[`*]|~~|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '');
+  const WORDS = 'never|not|no|nothing|none|nor|n\\/a|zero|disabled|unused|offline|local[- ]only|isolated|nil|nope|nada|absent|false|forbidden|blocked|prohibited|won\'t|cannot|can\'t|doesn\'t|does not|don\'t|without|avoids?';
+  const MARKS = '❌|✗|✘|✖|⛔|🚫';
+  const DENY = new RegExp(`\\b(${WORDS})\\b|${MARKS}`, 'i');
+  // "(empty)" as a table cell or value is a denial; the word "empty" elsewhere usually isn't.
+  const DENY_AFTER = new RegExp(`^[\\w .-]{0,60}?[\\s:|()[\\]?\\-–—]*(\\b(${WORDS}|off|0)\\b|\\bn\\.a\\.|\\(empty\\)|${MARKS})`, 'i');
+  // A question answered in the same line ("Does it make network requests? No.") is judged by its answer.
+  return visibleText(text).split(/(?<=[.!])\s+|\n/).some(raw => {
+    // Formatting doesn't change the meaning; struck-out text isn't a statement. Curly
+    // apostrophes read as straight ones. (A single ~ is kept: it's the home folder in ~/x.)
+    const s = raw.replace(/~~[^~\n]*~~/g, ' ').replace(/[`*]|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '').replace(/[‘’]/g, "'");
     const m = s.match(re);
     if (!m) return false;
     if (DENY.test(s.slice(0, m.index))) return false;
-    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 80);
     if (/^-?(free|isolated)\b/i.test(after)) return false;                       // "network-free", "network-isolated"
     if (/^[\w ]{0,25}?[\s:|()[\]]+[-–—]+\s*(\||[).\]]|$)/.test(after)) return false;   // a dash cell or "– none"
+    if (/^[^?]{0,60}\?\s*(no|nope|never|none)\b/i.test(after)) return false;         // "…network requests? No."
     return !DENY_AFTER.test(after);
   });
 }
@@ -990,15 +1037,33 @@ export function disclosed(re, text) {
 // its target. Line breaks are kept so line numbers still match.
 export function visibleText(md) {
   const blank = m => m.replace(/[^\n]/g, ' ');           // keep line breaks, so line numbers still match
-  // Code fences are visible as written; everything else is cleaned of what a reader can't see.
-  return String(md || '').split(/(^ {0,3}(?:```|~~~)[^\n]*\n[\s\S]*?^ {0,3}(?:```|~~~)[ \t]*$)/m).map((part, k) => (k % 2 ? part : part
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, blank)                                       // comments, also one left open
+  const src = String(md || '');
+  // One pass left to right: whichever starts first, a code fence (kept as written) or an HTML
+  // comment (hidden, also one left open, even if it wraps a fence), wins.
+  const parts = [];
+  let pos = 0;
+  const FENCE = /^ {0,3}(```|~~~)[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/m;
+  while (pos < src.length) {
+    const rest = src.slice(pos);
+    const f = rest.match(FENCE), c = rest.indexOf('<!--');
+    const fAt = f ? f.index : -1;
+    if (c >= 0 && (fAt < 0 || c < fAt)) {
+      const end = rest.indexOf('-->', c + 4);
+      const stop = end < 0 ? rest.length : end + 3;
+      parts.push({ text: rest.slice(0, c) }, { text: blank(rest.slice(c, stop)), raw: true });
+      pos += stop;
+    } else if (fAt >= 0) {
+      parts.push({ text: rest.slice(0, fAt) }, { text: f[0], raw: true });
+      pos += fAt + f[0].length;
+    } else { parts.push({ text: rest }); break; }
+  }
+  return parts.map(p => (p.raw ? p.text : p.text
     .replace(/<(style|script|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, blank)
     .replace(/<\?[\s\S]*?(?:\?>|$)/g, blank)
     .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<[^>\n]*>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/gm, '')   // link reference definitions only
-    .replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, ' ')                                       // images: alt text isn't shown
-    .replace(/<img\b[^>]*>/gi, ' ')
-    .replace(/<\/?[A-Za-z][^>\n]*>/g, ' ')                                           // other tags: keep the text, drop attributes
+    .replace(/!\[(?:[^[\]\n]|\[[^[\]\n]*\])*\](?:\([^)\n]*\)|\[[^\]\n]*\])/g, ' ')     // images, inline or by reference: alt text isn't shown
+    .replace(/<img\b[^>]{0,2000}>/gi, blank)
+    .replace(/<\/?[A-Za-z][^>]{0,2000}>/g, m => (/^<https?:/i.test(m) ? m : blank(m)))   // tags (even over lines): keep text, drop attributes; keep <https://…> autolinks
     .replace(/\]\([^)\n]*\)/g, ']'))).join('');                                     // links: text without the target
 }
 

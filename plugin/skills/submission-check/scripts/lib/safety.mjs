@@ -12,15 +12,14 @@ const MAX_LINE = 4096;
 
 export const maskEmail = e => { const at = e.indexOf('@'); return `${e.slice(0, Math.min(2, at))}…${e.slice(at)}`; };
 
-// terms come from lib/terms.mjs prepare(); their matching runs under a time limit there.
-// Text that can't be redacted in time is withheld, never printed as it was.
+// terms come from lib/terms.mjs prepare(); their matching runs under a time limit there, and a
+// timeout stops the whole check (TermTimeout) before anything is written.
 export function makeRedactor(terms = []) {
   return s => {
     if (typeof s !== 'string' || !s) return s;
     const out = s.replace(EMAIL, e => (SAFE_EMAIL.test(e) ? e : maskEmail(e)));
     if (!terms.length) return out.split('\n').map(l => (l.length > MAX_LINE ? l.slice(0, 200) + ' …(long line not shown)' : l)).join('\n');
-    const r = redactTerms(terms, out);
-    return r == null ? '«text withheld: a private-term pattern ran out of time while redacting it»' : r;
+    return redactTerms(terms, out);
   };
 }
 

@@ -195,7 +195,9 @@ function applyAllow(entries, list, F) {
 // Runs one group of checks; an unexpected error becomes a FAIL finding instead of ending the run.
 function guard(F, name, fn, fallback) {
   try { return fn(); }
-  catch (e) { F.add('FAIL', 'CHECK-ERROR', `The ${name} checks stopped on unexpected input`, { detail: `${e.message}\nThe rest of the report still ran. Usually a field has the wrong type (for example a number where text belongs).` }); return fallback; }
+  catch (e) {
+    if (e instanceof T.TermTimeout) throw e;      // fail closed: never carry on with a pattern that couldn't finish
+    F.add('FAIL', 'CHECK-ERROR', `The ${name} checks stopped on unexpected input`, { detail: `${e.message}\nThe rest of the report still ran. Usually a field has the wrong type (for example a number where text belongs).` }); return fallback; }
 }
 
 // The output folder must not be (or contain) a link, and the default one must not be committed.
@@ -335,9 +337,6 @@ function runWith(opts, repoRoot, commit, mirror) {
   // Redact every string that came from the repo before anything is written or printed.
   const redact = makeRedactor(privateTerms);
   const findings = F.list.map(f => ({ ...f, title: redact(f.title), detail: redact(f.detail), file: redact(f.file), allowedReason: redact(f.allowedReason) }));
-  // Patterns that ran out of time, while checking or while redacting, are reported (by line number only).
-  for (const t of privateTerms) if (t.timedOut) findings.push({ sev: 'WARN', id: 'PRIVATE-TERMS', title: `Private-term pattern on line ${t.n} ran out of time, so it was switched off`,
-    detail: `Each batch of matches is limited to ${T.BUDGET_MS} ms. Text it would have matched wasn't checked for it, and text it couldn't redact in time was withheld. Rewrite the pattern more simply (for example without a repeated group like (a+)+).` });
   const manifest = mf.manifest && typeof mf.manifest === 'object' ? JSON.parse(JSON.stringify(mf.manifest)) : mf.manifest;
   if (manifest?.author && typeof manifest.author === 'object') delete manifest.author.email;
   const live = findings.filter(f => f.sev !== 'ALLOWED');
