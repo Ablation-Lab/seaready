@@ -160,6 +160,7 @@ A ship is checked before it is cleared to sail; Seaready does the same for a plu
 - README text with Windows line endings (CRLF) is checked exactly like LF; a README with old Mac line endings (CR only) isn't, and its headings and example prompts are missed.
 - When a home-folder pattern matches, the drafted data-handling answers say CHECK THE CODE inside the sentence; rewrite the sentence once you've checked.
 - Very long lines made of word characters can make an ordinary private-term pattern run out of time, which stops the run. Simplify the pattern, or remove the long lines from what you check.
+- Each run leaves one empty `seaready-cwd-…` folder in your temp folder (the empty folder programs run in), and a run that is stopped part-way can leave a `seaready-mirror-…` folder. Both are safe to delete.
 - The directory copy is only as fresh as Claude Code's cache. Open the plugin directory in Claude Code to refresh it.
 - Rules change. The rules were read on 2026-11-05; `skills/submission-check/reference/policy.md` links the live pages.
 
