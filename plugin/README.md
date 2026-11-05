@@ -1,20 +1,20 @@
-# Tollgate
+# Checkrider
 
-Tollgate checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It runs the portal's blocking rules and the Directory Policy against your repository, tells you what passes, what needs a look and what fails, and fills in a submission sheet with suggested answers for every step of the portal form.
+Checkrider checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It runs the portal's blocking rules and the Directory Policy against your repository, tells you what passes, what needs a look and what fails, and fills in a submission sheet with suggested answers for every step of the portal form.
 
 It grew out of submitting three plugins (Lore Lookup, Cutproof and SessionKeeper) and fixing what the portal held each time. Every problem we hit is now a check, tested on the commit from before the fix.
 
-It adds one skill, `submission-check` (in Claude Code: `/tollgate:submission-check`). It's an independent project, not made or endorsed by Anthropic, and a clean run is not approval: the portal's Validate, its security scan and Anthropic's reviewers decide.
+It adds one skill, `submission-check` (in Claude Code: `/checkrider:submission-check`). It's an independent project, not made or endorsed by Anthropic, and a clean run is not approval: the portal's Validate, its security scan and Anthropic's reviewers decide.
 
 ## Install
 
 In Claude Code 2.1.275 or later:
 
 ```
-/plugin install tollgate --marketplace Ablation-Lab/tollgate
+/plugin install checkrider --marketplace Ablation-Lab/checkrider
 ```
 
-On older versions, add the marketplace first with `/plugin marketplace add Ablation-Lab/tollgate`, then `/plugin install tollgate@tollgate`. To use the skill without the plugin, copy the `skills/submission-check` folder into `~/.claude/skills/`; it then runs as `/submission-check`. It needs Node.js 18 or later and git.
+On older versions, add the marketplace first with `/plugin marketplace add Ablation-Lab/checkrider`, then `/plugin install checkrider@checkrider`. To use the skill without the plugin, copy the `skills/submission-check` folder into `~/.claude/skills/`; it then runs as `/submission-check`. It needs Node.js 18 or later and git.
 
 ## What it checks
 
@@ -47,7 +47,7 @@ Claude runs the checks, then reads the code the findings point at to judge the t
 
 ## Try it with the sample (for reviewers)
 
-There's no account to set up: Tollgate runs locally. The sample is a plugin repo with problems planted in it. A script makes it, and the script lives in the repository's `samples` folder, outside the plugin folder, so the planted problems never ship with the plugin. With Node.js 18 or later and git, from a clone of this repository:
+There's no account to set up: Checkrider runs locally. The sample is a plugin repo with problems planted in it. A script makes it, and the script lives in the repository's `samples` folder, outside the plugin folder, so the planted problems never ship with the plugin. With Node.js 18 or later and git, from a clone of this repository:
 
 ```
 node samples/make-sample.mjs
@@ -59,7 +59,7 @@ It prints the path of a new folder under your temp folder holding a two-commit g
 Run the submission check on <the folder it printed>
 ```
 
-The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code transcripts, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](https://github.com/Ablation-Lab/tollgate/blob/main/samples/expected-results.md) lists everything it should report.
+The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code transcripts, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](https://github.com/Ablation-Lab/checkrider/blob/main/samples/expected-results.md) lists everything it should report.
 
 ## What it runs, reads and writes
 
@@ -77,7 +77,7 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
 
 ## Privacy
 
-Tollgate has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. The report masks email addresses and never prints the words in your private list. What Claude reads from the report reaches Anthropic the way anything in your conversation does.
+Checkrider has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. The report masks email addresses and never prints the words in your private list. What Claude reads from the report reaches Anthropic the way anything in your conversation does.
 
 ## How it's built
 
@@ -98,9 +98,13 @@ Tollgate has no server, account or telemetry and collects nothing. Everything ha
 
 ## How it compares
 
-- **The portal's Validate** is the authority, and runs after you push. Tollgate runs before, on your machine, and adds the policy and disclosure checks that only Anthropic's reviewers and security scan apply later.
-- **`claude plugin validate`** checks that files parse and match the schema. Tollgate runs it for you and goes much further.
-- **Directory Preflight** (an existing directory listing) checks a plugin against the pre-submission checklist's rules. Tollgate also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, and writes the submission sheet.
+- **The portal's Validate** is the authority, and runs after you push. Checkrider runs before, on your machine, and adds the policy and disclosure checks that only Anthropic's reviewers and security scan apply later.
+- **`claude plugin validate`** checks that files parse and match the schema. Checkrider runs it for you and goes much further.
+- **Directory Preflight** (an existing directory listing) checks a plugin against the pre-submission checklist's rules. Checkrider also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, and writes the submission sheet.
+
+## The name
+
+A checkride is the flight an examiner takes with a pilot before signing them off; Checkrider does the same for a plugin before it goes to the directory. It was called Tollgate during development, and renamed before release because another Claude Code plugin on GitHub already uses that name.
 
 ## Limits
 
@@ -118,7 +122,7 @@ Tollgate has no server, account or telemetry and collects nothing. Everything ha
 
 ## Support
 
-Report problems at https://github.com/Ablation-Lab/tollgate/issues. For a security concern, open an issue asking for a private contact rather than posting details.
+Report problems at https://github.com/Ablation-Lab/checkrider/issues. For a security concern, open an issue asking for a private contact rather than posting details.
 
 ## Licence
 

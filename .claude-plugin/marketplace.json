@@ -1,10 +1,10 @@
 {
-  "name": "tollgate",
-  "description": "Tollgate from Ablation Lab: checks a plugin repo before it goes to Anthropic's plugin directory.",
+  "name": "checkrider",
+  "description": "Checkrider from Ablation Lab: checks a plugin repo before it goes to Anthropic's plugin directory.",
   "owner": { "name": "Ablation Lab" },
   "plugins": [
     {
-      "name": "tollgate",
+      "name": "checkrider",
       "source": "./plugin",
       "description": "Checks a plugin repository against the plugin directory's rules before you submit it, and fills in the submission form.",
       "version": "1.0.0",

@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const target = path.resolve(process.argv[2] || path.join(os.tmpdir(), `tollgate-sample-${Date.now().toString(36)}`));
+const target = path.resolve(process.argv[2] || path.join(os.tmpdir(), `checkrider-sample-${Date.now().toString(36)}`));
 if (fs.existsSync(target) && fs.readdirSync(target).length) {
   console.error(`make-sample: ${target} is not empty; give an empty or new folder.`);
   process.exit(2);

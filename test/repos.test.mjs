@@ -9,7 +9,7 @@ import { repo, configDir, cleanPlugin, ids, tmpDir, write, git } from './helpers
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
-const check = (root, extra = {}) => run({ repo: root, ref: 'HEAD', out: tmpDir('tollgate-out-'), worktree: false, privateTerms: null,
+const check = (root, extra = {}) => run({ repo: root, ref: 'HEAD', out: tmpDir('checkrider-out-'), worktree: false, privateTerms: null,
   configDir: extra.configDir ?? configDir(), validate: false, quiet: true, pluginPath: extra.pluginPath ?? null });
 
 test('a clean plugin has no FAIL', () => {
