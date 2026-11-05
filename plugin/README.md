@@ -6,6 +6,16 @@ It grew out of submitting three plugins (Lore Lookup, Cutproof and SessionKeeper
 
 It adds one skill, `submission-check` (in Claude Code: `/tollgate:submission-check`). It's an independent project, not made or endorsed by Anthropic, and a clean run is not approval: the portal's Validate, its security scan and Anthropic's reviewers decide.
 
+## Install
+
+In Claude Code 2.1.275 or later:
+
+```
+/plugin install tollgate --marketplace Ablation-Lab/tollgate
+```
+
+On older versions, add the marketplace first with `/plugin marketplace add Ablation-Lab/tollgate`, then `/plugin install tollgate@tollgate`. To use the skill without the plugin, copy the `skills/submission-check` folder into `~/.claude/skills/`; it then runs as `/submission-check`. It needs Node.js 18 or later and git.
+
 ## What it checks
 
 | Area | What it looks for |

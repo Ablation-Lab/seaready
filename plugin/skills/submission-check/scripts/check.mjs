@@ -118,7 +118,10 @@ function claudeValidate(files, pluginDir, F) {
       out = execFileSync(exe, ['plugin', 'validate', target], { cwd: tmp, env, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: /\.cmd$/i.test(exe) });
     } catch (e) { code = e.status ?? 1; out = `${e.stdout || ''}${e.stderr || ''}` || e.message; }
     const text = out.replace(/\x1b\[[0-9;]*m/g, '').replaceAll(tmp, '<tmp>').trim();
-    if (code === 0 && /passed/i.test(text) && !/warn/i.test(text)) F.add('PASS', 'CLAUDE-VALIDATE', '`claude plugin validate` passed', { detail: text.split('\n').slice(-3).join('\n') });
+    // Newer versions add "Advice (does not change the verdict)": keep it as INFO.
+    const advice = text.split(/\n\s*\S*\s*Advice[^\n]*\n/)[1];
+    if (advice) F.add('INFO', 'CLAUDE-VALIDATE', '`claude plugin validate` advice', { detail: advice.replace(/\n\s*✔ Validation passed\s*$/, '').trim().slice(0, 1500) });
+    if (code === 0 && /passed/i.test(text) && !/warn/i.test(text)) F.add('PASS', 'CLAUDE-VALIDATE', '`claude plugin validate` passed', { detail: text.split('\n').filter(l => /✔|passed|found nothing/i.test(l)).slice(0, 3).join('\n') });
     else if (code === 0) F.add('WARN', 'CLAUDE-VALIDATE', '`claude plugin validate` passed with warnings', { detail: text.slice(0, 1500) });
     else F.add('FAIL', 'CLAUDE-VALIDATE', '`claude plugin validate` failed', { detail: text.slice(0, 1500), portal: 'Blocks (syntax and schema)' });
   } finally {
