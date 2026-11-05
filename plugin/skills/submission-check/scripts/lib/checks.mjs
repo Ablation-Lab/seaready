@@ -923,8 +923,7 @@ export function checkCode(ctx, F, readme) {
   if (fails.length) F.add('FAIL', 'CHAT-HISTORY', 'Reads chat history, transcripts, memory or conversation summaries', { file: fails[0].file, line: fails[0].line, policy: '1G', detail: fmt(fails), fix: 'Policy 1G: software must not query or extract data from Claude\'s memory, chat history or conversation summaries. If this is local-only metadata (e.g. titles) and core to the plugin, say exactly what is read and what never leaves the machine in a "For reviewers" section — and expect a reviewer to decide.' });
   if (warns.length) F.add('WARN', 'CHAT-HISTORY', 'Touches session state or mentions transcripts', { file: warns[0].file, line: warns[0].line, policy: '1G', detail: fmt(warns) + '\nCheck by reading the code: listing running sessions is different from reading what was said in them.' });
   // What the docs say the plugin (or the app it drives) reads.
-  const docHits = [], otherToolHits = [];
-  const ownNames = [ctx.manifest?.name, ctx.manifest?.displayName, ...((ctx.components?.skills || []).map(s => s.name))].filter(x => typeof x === 'string' && x).map(normName);
+  const docHits = [], compareHits = [];
   const docFiles = [readme?.path, ...[...files.keys()].filter(p => p.startsWith(base) && isInstr(p))].filter(Boolean);
   for (const dp of [...new Set(docFiles)]) {
     const t = (files.get(dp)?.data.toString('utf8') || '').replace(/\r\n/g, '\n');
@@ -943,19 +942,18 @@ export function checkCode(ctx, F, readme) {
         const before = sentence.slice(0, m.index);
         if (/\b(never|not|doesn't|does not|don't|no|without|nor|instead of)\b[^,;]*$/i.test(before)) continue;
         const hit = { file: dp, line: lineOf(t, at >= 0 ? at : t.indexOf(sentence)), what, sev, text: sentence.trim().slice(0, 200) };
-        // Downgraded only when it clearly describes another named tool: in a comparison section of the
-        // README, on a line that starts with that tool's name (bold, linked or in code) and the name
-        // isn't this plugin's. Anything else stays a FAIL.
-        if (at >= 0 && otherTools.some(([s, e]) => at >= s && at < e) && namesOtherTool(t, at, ownNames)) otherToolHits.push(hit); else docHits.push(hit);
+        // In the README's comparison section the words may describe another tool, but no rule decides
+        // that: it's a WARN for the judgement step to read. Everywhere else the docs' claim counts as is.
+        if (at >= 0 && otherTools.some(([s, e]) => at >= s && at < e)) compareHits.push(hit); else docHits.push(hit);
         break;
       }
     }
   }
-  if (otherToolHits.length) F.add('INFO', 'CHAT-HISTORY', 'Chat-history words in a section about other tools', { file: otherToolHits[0].file, line: otherToolHits[0].line, policy: '1G', detail: otherToolHits.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThese are in a comparison section (such as How it compares), so they describe other tools, not this plugin. Read them to confirm.' });
+  if (compareHits.length) F.add('WARN', 'CHAT-HISTORY', 'Chat-history words in the README\'s comparison section: read each one and decide', { file: compareHits[0].file, line: compareHits[0].line, policy: '1G', detail: compareHits.slice(0, 6).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThese sit under a heading such as How it compares, so they may describe other tools. If any of them describes this plugin, treat it as a FAIL (policy 1G).' });
   const docFails = docHits.filter(h => h.sev === 'FAIL');
   if (docFails.length && !fails.length) F.add('FAIL', 'CHAT-HISTORY', 'The docs say it reads chat history, transcripts or conversation summaries', { file: docFails[0].file, line: docFails[0].line, policy: '1G', detail: docFails.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThe code doing it may be outside the plugin folder (an app the plugin starts); its behaviour still counts.', fix: 'Policy 1G forbids querying chat history and conversation summaries (auto-generated titles count). If only local metadata is read and it never reaches Claude, explain exactly that for reviewers — and expect a reviewer decision, possibly a rejection.' });
   else if (docHits.length && !fails.length && !warns.length) F.add('WARN', 'CHAT-HISTORY', 'The docs mention reading Claude Code session data', { file: docHits[0].file, line: docHits[0].line, policy: '1G', detail: docHits.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') });
-  if (!fails.length && !warns.length && !docHits.length && !allowedChat.length) F.add('PASS', 'CHAT-HISTORY', 'No reads of chat history, transcripts, memory or summaries found', { policy: '1G' });
+  if (!fails.length && !warns.length && !docHits.length && !compareHits.length && !allowedChat.length) F.add('PASS', 'CHAT-HISTORY', 'No reads of chat history, transcripts, memory or summaries found', { policy: '1G' });
   // Companion code outside the plugin folder (e.g. an app the plugin starts). Not shipped, but its
   // behaviour is the plugin's behaviour when the plugin runs it.
   if (base) {
@@ -1072,41 +1070,34 @@ function hideBlocks(text, blank) {
   }
 }
 
-const normName = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
-// True when the line holding position `at` starts (after a list marker) with a tool's name written in
-// bold, as a link or in code, and that name isn't one of this plugin's own names.
-export function namesOtherTool(t, at, ownNames) {
-  const start = t.lastIndexOf('\n', at - 1) + 1;
-  let end = t.indexOf('\n', at); if (end < 0) end = t.length;
-  const line = t.slice(start, end).replace(/\r$/, '');
-  const m = line.match(/^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+)?(?:\*\*([^*\n]{1,80})\*\*|__([^_\n]{1,80})__|\[([^\]\n]{1,80})\]\(|`([^`\n]{1,80})`)/);
-  if (!m) return false;
-  const name = normName(m[1] ?? m[2] ?? m[3] ?? m[4]);
-  if (!name) return false;
-  return !ownNames.some(n => n && (name === n || name.includes(n) || n.includes(name)));
-}
-
 // Character ranges of sections that compare the plugin with other tools ("How it compares",
 // "Alternatives", "Similar tools", "Related projects", "See also"), each up to the next heading of the
-// same or a higher level. Found line by line; a heading inside an HTML comment or a code fence doesn't
-// count (a reader doesn't see it as a heading), and \r line endings are allowed.
+// same or a higher level. Chat-history words inside one are a WARN rather than a FAIL, so the ranges
+// fail closed: only a plain visible "#" heading starts a section (not one inside an HTML comment or a
+// code fence), and anything that looks like a heading of the same or a higher level ends it, whatever
+// the comment or fence state: "#" headings indented up to 3 spaces, setext underlines and <h1>-<h6>.
 export function comparisonRanges(t) {
   const out = [];
   const lines = String(t).split('\n');
-  let pos = 0, open = null, inComment = false, fence = null;
+  let pos = 0, open = null, inComment = false, fence = null, prev = '';
   for (const raw of lines) {
     const line = raw.replace(/\r$/, '');
     const at = pos;
     pos += raw.length + 1;
+    if (open) {
+      const ah = line.match(/^ {0,3}(#{1,6})(?:[ \t]|$)/);
+      const se = /\S/.test(prev) && line.match(/^ {0,3}(=+|-+)[ \t]*$/);
+      const hh = line.match(/<h([1-6])\b/i);
+      const level = ah ? ah[1].length : se ? (se[1][0] === '=' ? 1 : 2) : hh ? Number(hh[1]) : 0;
+      if (level && level <= open.level) { out.push([open.start, at]); open = null; }
+    }
+    prev = line;
     if (inComment) { if (line.includes('-->')) inComment = false; continue; }
     if (fence) { const f = line.trim(); if (f.startsWith(fence) && /^[`~]+$/.test(f)) fence = null; continue; }
     const fm = line.match(/^ {0,3}(```|~~~)/);
     if (fm) { fence = fm[1]; continue; }
     const c = line.indexOf('<!--');
     const h = line.match(/^(#{1,6})[ \t]+(.*)$/);
-    // Any visible heading at the same or a higher level ends a comparison section (failing closed: a
-    // section never runs on past where a reader sees it end).
-    if (h && open && h[1].length <= open.level) { out.push([open.start, at]); open = null; }
     if (c >= 0 && line.indexOf('-->', c + 4) < 0) { inComment = true; continue; }
     // Only a plain heading starts one: not one with a comment on its line.
     if (h && c < 0 && !open && /^(how (it|this) compares|comparison|compared (with|to)|alternatives|similar (plugins|tools|skills|projects)|related (plugins|tools|skills|projects)|see also|other tools)\b/i.test(h[2].trim())) open = { level: h[1].length, start: at };

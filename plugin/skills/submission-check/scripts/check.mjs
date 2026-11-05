@@ -219,13 +219,16 @@ function prepareOut(outDir, isDefault, repoRoot, tree) {
 }
 
 export function run(opts) {
-  const repoIn = path.resolve(opts.repo);
-  if (!fs.existsSync(repoIn)) throw new Error(`no such folder: ${repoIn}`);
-  if (!G.isRepo(repoIn)) throw new Error(`${repoIn} is not a git repository. The portal reads plugins from GitHub, so commit it first.`);
-  const repoRoot = path.resolve(G.topLevel(repoIn));
-  const commit = G.resolveRef(repoRoot, opts.ref);
-  const mirror = G.makeMirror(repoRoot);
-  try { return runWith(opts, repoRoot, commit, mirror); } finally { mirror.dispose(); }
+  // The temporary folders (the empty working folder and the mirror) are removed however the run ends.
+  try {
+    const repoIn = path.resolve(opts.repo);
+    if (!fs.existsSync(repoIn)) throw new Error(`no such folder: ${repoIn}`);
+    if (!G.isRepo(repoIn)) throw new Error(`${repoIn} is not a git repository. The portal reads plugins from GitHub, so commit it first.`);
+    const repoRoot = path.resolve(G.topLevel(repoIn));
+    const commit = G.resolveRef(repoRoot, opts.ref);
+    const mirror = G.makeMirror(repoRoot);
+    try { return runWith(opts, repoRoot, commit, mirror); } finally { mirror.dispose(); }
+  } finally { G.removeTemp(); }
 }
 
 function runWith(opts, repoRoot, commit, mirror) {
@@ -372,6 +375,7 @@ function runWith(opts, repoRoot, commit, mirror) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
+  G.removeTempOnSignals();
   const opts = parseArgs(process.argv.slice(2));
   let res;
   try { res = run(opts); }

@@ -22,17 +22,15 @@ test('regression 1: an "Alternatives" heading in SKILL.md does not downgrade a c
   assert.ok(!chat(res, 'INFO'));
 });
 
-test('regression 1: a README comparison section downgrades only a line naming another tool', () => {
-  const plain = cleanPlugin();
-  plain['README.md'] += `\n## How it compares\n\n${CLAIM}\n`;
-  assert.ok(chat(check(repo(plain)), 'FAIL'), 'no other tool named: still a FAIL');
-  const own = cleanPlugin();
-  own['README.md'] += '\n## How it compares\n\n- **Quiet Notes** reads the session summary of each conversation.\n';
-  assert.ok(chat(check(repo(own)), 'FAIL'), "this plugin's own name: still a FAIL");
-  const other = cleanPlugin();
-  other['README.md'] += '\n## How it compares\n\n- **Focus Mode** reads the session summary of each conversation.\n- [Desk Timer](https://example.com/desk-timer) keeps a session summary too.\n';
-  const res = check(repo(other));
-  assert.ok(!chat(res, 'FAIL') && chat(res, 'INFO'), 'another named tool: INFO');
+// Changed in the third round: the name heuristic is gone. Every chat-history claim in the README's
+// comparison section is a WARN for the judgement step, whoever it names; none is INFO.
+test('regression 1: a README comparison section makes every chat-history claim a WARN, never INFO', () => {
+  for (const line of [CLAIM, '- **Quiet Notes** reads the session summary of each conversation.', '- **Focus Mode** reads the session summary of each conversation.']) {
+    const f = cleanPlugin();
+    f['README.md'] += `\n## How it compares\n\n${line}\n`;
+    const res = check(repo(f));
+    assert.ok(chat(res, 'WARN') && !chat(res, 'INFO') && !chat(res, 'FAIL'), line);
+  }
 });
 
 // 2. PowerShell home paths.
@@ -91,7 +89,7 @@ const fixtures = {
   '"no network" claim with network code': [f => { f['README.md'] = f['README.md'].replace("Nothing leaves your computer except what Claude reads in the conversation.", 'It makes no network requests.'); f['skills/quiet-notes/scripts/s.mjs'] = "await fetch('https://api.quiet-sync.example/notes');\n"; return f; }, ['WARN', 'CLAIM-CHECK']],
   'disclosed host': [f => { f['README.md'] = f['README.md'].replace('## Privacy\n\n', '## Privacy\n\nIt sends each note to api.quiet-sync.example when you ask it to sync.\n\n'); f['skills/quiet-notes/scripts/s.mjs'] = "await fetch('https://api.quiet-sync.example/notes');\n"; return f; }, null],
   'chat-history claim': [f => { f['README.md'] += `\n${CLAIM}\n`; return f; }, ['FAIL', 'CHAT-HISTORY']],
-  'comparison section naming another tool': [f => { f['README.md'] += '\n## How it compares\n\n- **Focus Mode** reads the session summary of each conversation.\n'; return f; }, ['INFO', 'CHAT-HISTORY']],
+  'comparison section naming another tool': [f => { f['README.md'] += '\n## How it compares\n\n- **Focus Mode** reads the session summary of each conversation.\n'; return f; }, ['WARN', 'CHAT-HISTORY']],
   'open comment hides the rest': [f => { f['README.md'] = f['README.md'].replace('## Privacy', '<!-- draft\n\n## Privacy'); return f; }, null],
   'short README': [f => { f['README.md'] = '# Quiet Notes\n\nKeeps notes.\n\n```\nSave a note\nList my notes\nFind a note\n```\n'; return f; }, ['FAIL', 'README']],
   'official wording': [f => { f['README.md'] = f['README.md'].replace('# Quiet Notes\n', '# Quiet Notes\n\nThe official Anthropic plugin for notes.\n'); return f; }, ['WARN', 'OFFICIAL']],

@@ -30,9 +30,24 @@ const SAFE_ENV = { GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS
 export class GitError extends Error {}
 
 let safeCwd = null;
+// Every temporary folder this process made and hasn't removed yet (the empty working folder and any
+// mirrors). removeTemp() deletes them; check.mjs calls it when a run finishes or fails, and on exit.
+const liveTemp = new Set();
+export function removeTemp() {
+  for (const d of liveTemp) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } liveTemp.delete(d); }
+  safeCwd = null;
+}
+process.on('exit', removeTemp);
+// Ctrl+C and termination signals: remove the folders, then exit as the signal would. (A process killed
+// outright, as Task Manager or a closed console does, runs no handler at all.)
+export function removeTempOnSignals() {
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129], ['SIGBREAK', 149]]) {
+    try { process.on(sig, () => { removeTemp(); process.exit(code); }); } catch { /* signal not supported here */ }
+  }
+}
 // An empty folder to run child processes in.
 export function emptyCwd() {
-  if (!safeCwd || !fs.existsSync(safeCwd)) safeCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'seaready-cwd-'));
+  if (!safeCwd || !fs.existsSync(safeCwd)) { safeCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'seaready-cwd-')); liveTemp.add(safeCwd); }
   return safeCwd;
 }
 
@@ -93,6 +108,7 @@ export function makeMirror(repo) {
   const objects = path.join(common, 'objects');
   if (!fs.existsSync(objects)) throw new GitError(`no objects folder at ${objects}`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seaready-mirror-'));
+  liveTemp.add(dir);
   const gitDir = path.join(dir, 'm.git');
   const emptyConfig = path.join(dir, 'empty-config');
   fs.writeFileSync(emptyConfig, '');
@@ -106,7 +122,7 @@ export function makeMirror(repo) {
   return {
     dir, gitDir,
     git: (args, opts = {}) => run(['--git-dir', gitDir, ...BASE, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', '-c', 'core.safecrlf=false', ...args], { ...opts, env }),
-    dispose: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp folder; ignore */ } },
+    dispose: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp folder; ignore */ } if (!fs.existsSync(dir)) liveTemp.delete(dir); },
   };
 }
 

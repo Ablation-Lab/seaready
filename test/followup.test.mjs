@@ -32,12 +32,13 @@ test('real home-folder paths are still found, in code and shell', () => {
   }
 });
 
-test('"session summary" about another tool in How it compares is not a 1G claim', () => {
+// Changed in the third round: a WARN for the judgement step to read, not INFO.
+test('"session summary" about another tool in How it compares is a WARN to read, not a FAIL', () => {
   const f = cleanPlugin();
   f['README.md'] += '\n## How it compares\n\n- **Focus Mode** tracks a goal and offers to park ideas in a list, with a session summary.\n';
   const res = check(repo(f));
   assert.ok(!res.findings.some(x => x.id === 'CHAT-HISTORY' && x.sev === 'FAIL'));
-  assert.ok(res.findings.some(x => x.id === 'CHAT-HISTORY' && x.sev === 'INFO'), 'still shown for a reader to confirm');
+  assert.ok(res.findings.some(x => x.id === 'CHAT-HISTORY' && x.sev === 'WARN'), 'shown for the judgement step to decide');
   const g = cleanPlugin();
   g['README.md'] += '\nIt reads the session summary of each conversation and lists it.\n';
   assert.ok(check(repo(g)).findings.some(x => x.id === 'CHAT-HISTORY' && x.sev === 'FAIL'), 'a claim about this plugin still fails');
