@@ -9,7 +9,7 @@ Three Ablation Lab plugins went through the directory portal in November 2026: L
 | "Use whenever …" and "whether Claude can do something" in the description | Lore Lookup | over-broad trigger (2A, 2D) | "Use when …" and "whether a Claude product has a feature" | TRIGGER |
 | No supportUrl or privacyPolicyUrl | Lore Lookup | Warnings | added both, pointing at README sections | MANIFEST-URLS |
 | A lock file's random ID named `LOCK_TOKEN` | Lore Lookup | Held: "Uses a credential from the user's machine" | renamed to `lockId` | CREDENTIAL-NAME |
-| `TokA`/`TokB`, `$key`, `$envCache` identifiers | Cutproof | same hold | renamed | CREDENTIAL-NAME |
+| Identifiers that looked like credentials: `TokA`/`TokB`, `$key`, `$envCache` | Cutproof | same hold | renamed | CREDENTIAL-NAME |
 | A test opened the bundled icon; the icon's file name in a README code block | Lore Lookup | Held: "Image or font file the plugin's code could run" | removed the test and the name | CODE-ASSET, ASSET-REF |
 | The sample script named a font file (`arialbd.ttf`) | Cutproof | same hold | drew text in a system font by family name | CODE-ASSET |
 | `git clone … ` and the installer in one code block | Lore Lookup | Held: "Contains a download-and-run command" | split into clone, then run | DOWNLOAD-RUN |
