@@ -1,9 +1,10 @@
 [
-  { "id": "PERMISSIONS", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "The line is the regular expression that looks for permission changes in other plugins; Seaready never changes settings." },
-  { "id": "CHAT-HISTORY", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "Finding messages that name the chat-history locations Seaready looks for; it never reads them." },
+  { "id": "EVIDENCE", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Pattern data: the regular expressions Seaready searches other plugins with. Nothing in this file runs a program, writes a file or makes a request." },
+  { "id": "EVIDENCE", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "Finding messages and lists of side-effect names; the only real side effects in Seaready are in check.mjs and git.mjs." },
+  { "id": "CREDENTIAL-NAME", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "The look-alike-name pattern itself." },
+  { "id": "CREDENTIAL-NAME", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "Finding IDs and messages about credentials (SECRET, CREDENTIAL-NAME); no credential is read." },
+  { "id": "PERMISSIONS", "file": "plugin/skills/submission-check/scripts/lib/checks.mjs", "reason": "The pattern that looks for permission changes in other plugins; Seaready never changes settings." },
   { "id": "INJECTION", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection pattern for shell: true, not a call." },
-  { "id": "ENV-PATH", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that mention environment variables; Seaready reads only PATH (to find git and claude)." },
-  { "id": "ENV-OTHER", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that mention environment variables." },
-  { "id": "DISCLOSE", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns for side effects; rules.mjs only describes what to look for." },
-  { "id": "CLAIM-CHECK", "match": "makes no network", "reason": "The only network-request matches are the detection patterns in rules.mjs; Seaready makes no requests." }
+  { "id": "ENV-PATH", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that name environment variables. Seaready reads only PATH (to find git and claude) and passes its environment to the claude CLI it starts." },
+  { "id": "ENV-OTHER", "file": "plugin/skills/submission-check/scripts/lib/rules.mjs", "reason": "Detection patterns that name environment variables." }
 ]

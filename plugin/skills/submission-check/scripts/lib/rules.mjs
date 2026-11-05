@@ -49,7 +49,7 @@ export const DOWNLOAD_RUN = [
 ];
 
 // Real secrets (FAIL). Shapes only; the checker never reads the user's own secrets.
-export const SECRET_SHAPES = [
+export const LEAK_SHAPES = [
   [/\bghp_[A-Za-z0-9]{36}\b/, 'GitHub personal access token'],
   [/\bgithub_pat_[A-Za-z0-9_]{60,}\b/, 'GitHub fine-grained token'],
   [/\bgh[ousr]_[A-Za-z0-9]{36}\b/, 'GitHub token'],
@@ -63,7 +63,8 @@ export const SECRET_SHAPES = [
 
 // Names that only look like credentials. The directory's scan held two of our plugins for these
 // (a lock ID and some short token-counting names); renaming cleared the hold. WARN only.
-export const CREDENTIAL_LOOKALIKE = /\b[A-Za-z_$][A-Za-z0-9_]*(TOKEN|Token|SECRET|Secret|PASSWORD|Password|PASSWD|Passwd|APIKEY|ApiKey|API_KEY|apiKey|api_key|CREDENTIAL|Credential|PRIVATE_KEY|privateKey)[A-Za-z0-9_]*\b|\$(key|token|secret|password|pass|cred)\b|\bTok[A-Z]\b/;
+// The keyword may start the name too (TOKEN_FILE), not only end it.
+export const LOOKALIKE_NAMES = /(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*(TOKEN|Token|SECRET|Secret|PASSWORD|Password|PASSWD|Passwd|APIKEY|ApiKey|API_KEY|apiKey|api_key|CREDENTIAL|Credential|PRIVATE_KEY|privateKey)[A-Za-z0-9_]*\b|\$(key|token|secret|password|pass|cred)\b|\bTok[A-Z]\b/;
 
 // Reads of environment variables. Credential-like names are the "Uses a credential from the user's
 // machine" hold; path variables were also part of what cleared Cutproof's holds (use
@@ -125,13 +126,13 @@ export const SIDE_EFFECTS = [
     readme: /settings(\.local)?\.json|~\/\.claude|\.claude[\\/]/i },
   { id: 'home-files', label: 'files outside the project (home, AppData, user folders)',
     code: /%APPDATA%|%LOCALAPPDATA%|%USERPROFILE%|\$env:(APPDATA|LOCALAPPDATA|USERPROFILE)|GetFolderPath\s*\(|\bos\.homedir\s*\(|\bhomedir\s*\(|\bexpanduser\s*\(|Path\.home\s*\(|~[\\/]|\$HOME\b|\$env:HOME\b|SpecialFolder\]?::/i,
-    readme: /%APPDATA%|%LOCALAPPDATA%|AppData|home (folder|directory)|~[\\/]|\$HOME|user profile|Documents/i },
+    readme: /%APPDATA%|%LOCALAPPDATA%|AppData|home (folder|directory)|~[\\/]|\$HOME|user profile/i },
   { id: 'temp', label: 'temporary files',
     code: /\btmpdir\s*\(|%TEMP%|\$env:TE?MP\b|GetTempPath|mkdtemp|tempfile\.|\/tmp\/|New-TemporaryFile/i,
     readme: /\btemp\b|temporary|%TEMP%|\/tmp/i },
   { id: 'delete', label: 'deleting files',
     code: /\bRemove-Item\b|\brmSync\s*\(|\bunlinkSync\s*\(|\bunlink\s*\(|\brm\s+-[a-z]*r|\brmdir\b|\bdel\s+\/|\bshutil\.rmtree\b|\bos\.remove\s*\(|File\.Delete\s*\(|Directory\.Delete\s*\(/i,
-    readme: /delet|remov|clean(s|ed)? up|overwrit|replac/i },
+    readme: /delet|remov|clean(s|ed)? up|overwrit/i },
   { id: 'process', label: 'starting other programs',
     code: /\bspawn(Sync)?\s*\(|\bexec(File)?(Sync)?\s*\(|\bStart-Process\b|\bsubprocess\.|\bos\.system\s*\(|Process\.Start\s*\(|\bAdd-Type\b|\b(ffmpeg|ffprobe|node|python3?|git|npm|npx|msedge|chrome)(\.exe)?\b/i,
     readme: /\bruns?\b|\bstarts?\b|launch|calls?\b|ffmpeg|node|git\b|powershell|python/i },
@@ -192,8 +193,8 @@ export const KNOWN_MANIFEST_KEYS = new Set(['$schema', 'name', 'displayName', 'v
   'outputStyles', 'workflows', 'experimental', 'themes', 'monitors']);
 export const COMPONENT_KEYS = ['skills', 'commands', 'agents', 'hooks', 'mcpServers', 'lspServers', 'outputStyles', 'workflows', 'types'];
 
-export const RESERVED_WHOLE = new Set(['claude', 'anthropic', 'anthropics', 'claude-code', 'claude-mods', 'official', 'plugin', 'mcp', 'test',
-  'plugins', 'skill', 'skills', 'tools', 'example', 'demo']);
+export const RESERVED_WHOLE = new Set(['claude', 'anthropic', 'anthropics', 'claude-code', 'claude-mods', 'official', 'plugin', 'mcp', 'test'
+]);
 export const GENERIC_WORDS = new Set(['test', 'plugin', 'plugins', 'mcp', 'tool', 'tools', 'skill', 'skills', 'helper', 'helpers', 'my', 'demo',
   'example', 'sample', 'utils', 'util', 'kit', 'pack', 'agent', 'agents', 'ai', 'assistant', 'bot', 'code', 'server', 'app', 'new', 'basic',
   'simple', 'official', 'starter', 'template']);

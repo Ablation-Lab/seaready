@@ -14,6 +14,8 @@ export function createFindings() {
 }
 
 export const isText = buf => { const n = Math.min(buf.length, 8000); for (let i = 0; i < n; i++) if (buf[i] === 0) return false; return true; };
+// Headings for the README section that lists what the plugin runs, reads, writes and sends.
+export const DISCLOSURE_HEADING = /what (it|this plugin|the plugin|the skill) (runs|reads|writes|sends|does|touches)|runs, (reads|sends)|reads and writes|what it (reads|writes)|how it works|data handling|files and network/i;
 const lineOf = (text, idx) => text.slice(0, idx).split('\n').length;
 export const maskEmail = e => { const [u, d] = e.split('@'); return `${u.slice(0, 2)}…@${d}`; };
 const rel = (p, base) => base && p.startsWith(base + '/') ? p.slice(base.length + 1) : p;
@@ -26,8 +28,24 @@ export function stripCode(md) {
 export function headings(md) {
   const out = [];
   const plain = stripCode(md);
-  plain.split('\n').forEach((l, i) => { const m = l.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/); if (m) out.push({ level: m[1].length, text: m[2], line: i + 1 }); });
+  // Linear-time pattern (the earlier one backtracked badly on long runs of spaces); very long
+  // lines can't be headings anyone reads, so they're skipped.
+  plain.split('\n').forEach((l, i) => {
+    if (l.length > 4096 || l[0] !== '#') return;
+    const m = l.match(/^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/);
+    if (m && m[2]) out.push({ level: m[1].length, text: m[2].trim(), line: i + 1 });
+  });
   return out;
+}
+
+// All sections whose heading matches re, joined (for disclosure, which can be split across sections).
+export function sections(md, re) {
+  const lines = md.split('\n');
+  const hs = headings(md);
+  return hs.filter(h => re.test(h.text)).map(h => {
+    const next = hs.find(x => x.line > h.line && x.level <= h.level);
+    return lines.slice(h.line - 1, next ? next.line - 1 : lines.length).join('\n');
+  }).join('\n');
 }
 
 export function githubSlug(h) {
@@ -46,7 +64,9 @@ export function section(md, re) {
 
 // Extracts example prompts from a README: lines in fenced blocks, bullets and quotes under a prompts heading.
 export function examplePrompts(md) {
-  const sec = section(md, /prompt|how to ask|try (it|these)|examples?\b|what to say|things to (ask|say)/i);
+  // Most specific heading first: "Example prompts" beats "Try it with the sample".
+  const sec = [/\bprompts?\b/i, /how to ask|what to say|things to (ask|say)/i, /\bexamples?\b/i, /try (it|these)/i]
+    .map(re => section(md, re)).find(s => s && /```|~~~|^\s*([-*+]|\d+\.)\s|^\s*>/m.test(s.text)) || section(md, /prompt|how to ask|examples?\b|try (it|these)/i);
   const found = [];
   const scan = (text) => {
     let inCode = false;
@@ -97,6 +117,8 @@ export function checkLayout(ctx, F) {
         break;
       }
     }
+    const hiddenInName = scanUnicode(e.path).filter(h => h.kind === 'hidden');
+    if (hiddenInName.length) F.add('FAIL', 'LAYOUT-NAME', 'File or folder name contains hidden characters', { file: e.path, policy: '2G', detail: hiddenInName.map(h => `${h.code} ${h.name}`).join(', ') + '. A right-to-left override can make a name read differently from what it is.', fix: 'Rename it.' });
     const k = e.path.toLowerCase();
     if (lower.has(k) && lower.get(k) !== e.path) F.add('FAIL', 'LAYOUT-CASE', 'Two paths differ only by capitalisation', { file: e.path, detail: `Also: ${lower.get(k)}`, portal: 'Validation stops' });
     lower.set(k, e.path);
@@ -200,8 +222,11 @@ export function checkManifest(ctx, F) {
   let m;
   const raw = f.data.toString('utf8');
   if (raw.charCodeAt(0) === 0xFEFF) F.add('WARN', 'MANIFEST-BOM', 'plugin.json starts with a byte order mark', { file: pj });
-  try { m = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch (e) { F.add('FAIL', 'MANIFEST-JSON', 'plugin.json is not valid JSON', { file: pj, detail: e.message, portal: 'Blocks' }); return facts; }
+  try { m = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw); } catch (e) { F.add('FAIL', 'MANIFEST-JSON', 'plugin.json is not valid JSON', { file: pj, detail: e.message, portal: 'Blocks' }); return facts; }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) { F.add('FAIL', 'MANIFEST-JSON', 'plugin.json must be a JSON object', { file: pj, portal: 'Blocks' }); return facts; }
   facts.manifest = m;
+  for (const k of ['name', 'displayName', 'version', 'description', 'icon', 'homepage', 'repository', 'license', 'documentationUrl', 'supportUrl', 'privacyPolicyUrl', 'termsOfServiceUrl'])
+    if (m[k] != null && typeof m[k] !== 'string') { F.add('FAIL', 'MANIFEST-TYPE', `"${k}" in plugin.json must be text`, { file: pj, detail: `It is ${Array.isArray(m[k]) ? 'a list' : typeof m[k]}.`, portal: 'Blocks (schema)' }); delete m[k]; }
   const name = m.name;
   // Name rules.
   if (!name) F.add('FAIL', 'MANIFEST-NAME', 'plugin.json has no name', { file: pj, portal: 'Blocks' });
@@ -222,10 +247,14 @@ export function checkManifest(ctx, F) {
       const { exact, similar } = findClashes(listings, { name, displayName: m.displayName }, ownRepoKey);
       const src = listings.sources.find(s => s.fetchedAt);
       const asOf = src ? ` (directory copy from ${src.fetchedAt.slice(0, 10)}, ${src.count} listings)` : '';
-      if (exact.length) F.add('FAIL', 'NAME-CLASH', 'Name is already used by another listing', { file: pj, detail: exact.slice(0, 5).map(x => `${x.name || x.displayName} (${x.displayName}) from ${x.repo || x.origin}`).join('; ') + asOf, portal: 'Blocks ("Name is taken")', fix: 'Pick a different name before the first submission; names are permanent.' });
+      // Only the directory itself decides "taken"; a marketplace you added (often your own) is a note.
+      const inDirectory = exact.filter(x => x.origin === 'directory');
+      const inMarketplaces = exact.filter(x => x.origin !== 'directory');
+      if (inDirectory.length) F.add('FAIL', 'NAME-CLASH', 'Name is already used by another listing', { file: pj, detail: inDirectory.slice(0, 5).map(x => `${x.name || x.displayName} (${x.displayName}) from ${x.repo || x.origin}`).join('; ') + asOf, portal: 'Blocks ("Name is taken")', fix: 'Pick a different name before the first submission; names are permanent.' });
+      if (inMarketplaces.length) F.add('INFO', 'NAME-MARKETPLACE', 'A marketplace you\'ve added lists this name', { file: pj, detail: inMarketplaces.slice(0, 5).map(x => `${x.name || x.displayName} in ${x.origin}`).join('; ') + '. If it is your own marketplace, this is expected; otherwise check it is not someone else\'s plugin.' });
       const others = similar.filter(s => !s.own);
       if (others.length) F.add('WARN', 'NAME-SIMILAR', 'Name looks like existing listings', { file: pj, detail: others.slice(0, 6).map(x => `${x.name || x.displayName} [${x.how}]`).join('; ') + asOf, portal: 'Held for a reviewer if look-alike ("Name may be confused with an existing listing")' });
-      if (!exact.length && !others.length) F.add('PASS', 'NAME-CLASH', 'No other listing uses this name or a look-alike', { detail: `Checked against ${listings.items.length} listings${asOf}.` });
+      if (!inDirectory.length && !others.length) F.add('PASS', 'NAME-CLASH', 'No other directory listing uses this name or a look-alike', { detail: `Checked against ${listings.items.length} listings${asOf}. Plugins that aren't listed (for example on GitHub) aren't covered here; the skill searches for those in its judgement step.` });
       if (similar.some(s => s.own)) F.add('INFO', 'NAME-OWN', 'This repository already has a listing in the directory', { detail: similar.filter(s => s.own).map(s => s.name || s.displayName).join(', ') });
       const overlaps = findOverlaps(listings, `${m.displayName || ''} ${m.description || ''}`).filter(o => !(ownRepoKey && o.repo?.toLowerCase().includes(ownRepoKey)));
       if (overlaps.length) F.add('INFO', 'OVERLAP', 'Listings with similar descriptions (policy 2C: descriptions must not create confusion with other listings)', { detail: overlaps.map(o => `${o.displayName || o.name} — ${o.summary.slice(0, 110)}`).join('\n'), policy: '2C', fix: 'Say in the README how yours differs ("How it compares").' });
@@ -285,11 +314,15 @@ export function checkManifest(ctx, F) {
   const mpPath = '.claude-plugin/marketplace.json';
   const mpf = files.get(mpPath) || (pluginDir ? files.get(joinPath(pluginDir, mpPath)) : null);
   if (mpf) {
-    try {
-      const mp = JSON.parse(mpf.data.toString('utf8').replace(/^\uFEFF/, ''));
+    let mp = null;
+    const mraw = mpf.data.toString('utf8');
+    try { mp = JSON.parse(mraw.charCodeAt(0) === 0xFEFF ? mraw.slice(1) : mraw); }
+    catch (e) { F.add('FAIL', 'MARKETPLACE', 'marketplace.json is not valid JSON', { file: mpPath, detail: e.message }); }
+    if (mp && (typeof mp !== 'object' || !Array.isArray(mp.plugins))) { F.add('FAIL', 'MARKETPLACE', 'marketplace.json needs a "plugins" list', { file: mpPath }); mp = null; }
+    if (mp) {
       facts.marketplace = mp;
-      const entry = (mp.plugins || []).find(p => p.name === name);
-      if ((mp.plugins || []).length > 1) F.add('INFO', 'MARKETPLACE', 'The marketplace lists several plugins: submit each plugin folder on its own', { file: mpPath });
+      const entry = mp.plugins.find(p => p && p.name === name);
+      if (mp.plugins.length > 1) F.add('INFO', 'MARKETPLACE', 'The marketplace lists several plugins: submit each plugin folder on its own', { file: mpPath });
       if (!entry) F.add('WARN', 'MARKETPLACE', `marketplace.json has no entry named "${name}"`, { file: mpPath });
       else {
         facts.mpEntry = entry;
@@ -301,7 +334,7 @@ export function checkManifest(ctx, F) {
           if (k in entry) F.add('WARN', 'MARKETPLACE', `"${k}" in the marketplace entry`, { file: mpPath, detail: 'Directory listing fields belong only in plugin.json; claude plugin validate reports them as unknown here.' });
         facts.category = entry.category; facts.tags = entry.tags;
       }
-    } catch (e) { F.add('FAIL', 'MARKETPLACE', 'marketplace.json is not valid JSON', { file: mpPath, detail: e.message }); }
+    }
   }
   return facts;
 }
@@ -522,8 +555,8 @@ export function checkReadme(ctx, F) {
   const hs = headings(text);
   const want = [
     [/privacy/i, 'Privacy', 'WARN', '3A', 'what it collects, sends and keeps; the privacyPolicyUrl can point at this heading'],
-    [/support|contact|issues|help/i, 'Support', 'WARN', '3B', 'where to report problems (GitHub issues) and security concerns'],
-    [/what (it|this plugin|the plugin) (runs|reads|writes|sends|does)|runs, (reads|sends)|reads and writes|what it (reads|writes)|how it works|data/i, 'What it runs, reads and writes', 'WARN', '3C', 'every program it starts, file it reads or writes, and request it sends'],
+    [/\bsupport\b|\bcontact\b|report(ing)? (a )?(bugs?|issues?|problems?)|getting help/i, 'Support', 'WARN', '3B', 'where to report problems (GitHub issues) and security concerns'],
+    [DISCLOSURE_HEADING, 'What it runs, reads and writes', 'WARN', '3C', 'every program it starts, file it reads or writes, and request it sends'],
     [/where it works|requirements|compatib|platforms?|surfaces/i, 'Where it works', 'WARN', null, 'which surfaces (Claude Code, Cowork, chat) and OS it needs'],
     [/troubleshoot|problems|faq|if something goes wrong|known issues/i, 'Troubleshooting', 'WARN', '3C', 'how users fix common problems'],
   ];
@@ -576,9 +609,13 @@ export function checkReadme(ctx, F) {
 // ---------------------------------------------------------------------------------------------
 // Code: injection, credentials, environment, side effects (for README-vs-code), chat history
 export function checkCode(ctx, F, readme) {
-  const { files, pluginDir, allow } = ctx;
+  const { files, pluginDir } = ctx;
+  const ignore = ctx.evidenceIgnore || new Set();
   const base = pluginDir ? pluginDir + '/' : '';
-  const rtext = readme?.text || '';
+  // Disclosure counts only in the sections meant for it ("What it runs, reads and writes",
+  // Privacy, data handling); a "feature requests" line elsewhere is not a disclosure.
+  const rfull = readme?.text || '';
+  const rtext = readme ? sections(rfull, new RegExp(`${DISCLOSURE_HEADING.source}|privacy|data handling|network|permissions`, 'i')) : '';
   const evidence = Object.fromEntries(R.SIDE_EFFECTS.map(s => [s.id, []]));
   const hosts = new Map();
   const envReads = [];
@@ -593,12 +630,17 @@ export function checkCode(ctx, F, readme) {
     if (!isCode && !instr && !/hooks\.json$|\.mcp\.json$/.test(p)) continue;
     const text = f.data.toString('utf8');
     const lines = text.split('\n');
+    // In instruction files only fenced code is behaviour; prose like "never edit settings.json" isn't.
+    const fenced = new Set();
+    if (instr) { let open = false; lines.forEach((l, i) => { if (/^\s*(```|~~~)/.test(l)) { open = !open; return; } if (open) fenced.add(i); }); }
+    const asEvidence = i => !ignore.has(p) && (!instr || fenced.has(i));
     lines.forEach((line, i) => {
+      if (line.length > 4096) return;   // minified or generated; the size checks report big files
       const ln = i + 1;
       const trimmed = line.trim();
       const isComment = /^(\/\/|#|<#|\*|::|rem\b|REM\b)/.test(trimmed);
       // Real secrets: everywhere, comments included.
-      for (const [re, what] of R.SECRET_SHAPES) if (re.test(line)) F.add('FAIL', 'SECRET', `Looks like a real ${what}`, { file: p, line: ln, portal: 'Blocks', fix: 'Remove it, rotate it, and rewrite history if it was ever pushed.' });
+      for (const [re, what] of R.LEAK_SHAPES) if (re.test(line)) F.add('FAIL', 'SECRET', `Looks like a real ${what}`, { file: p, line: ln, portal: 'Blocks', fix: 'Remove it, rotate it, and rewrite history if it was ever pushed.' });
       if (isComment && !instr) return;
       if (isCode) {
         if (!isTest) for (const [re, label, ext] of R.INJECTION) if (ext.test(p) && re.test(line)) {
@@ -612,7 +654,7 @@ export function checkCode(ctx, F, readme) {
           else F.add('WARN', 'INJECTION', `Shell-injection risk: ${label}`, { file: p, line: ln, detail: trimmed.slice(0, 160), fix: 'Pass arguments as an array with no shell, validate inputs (e.g. numbers must be whole numbers), and quote every expansion.' });
         }
         if (R.SHELL_EXT.test(p) && /\$'[^']*\\[nrt]/.test(line)) F.add('INFO', 'ANSI-C', 'ANSI-C quoting ($\'…\')', { file: p, line: ln, detail: 'Both Ablation Lab privacy checks swapped this for printf -v while clearing directory holds. Harmless, but reads as obfuscated to some scanners.' });
-        const cl = line.match(R.CREDENTIAL_LOOKALIKE);
+        const cl = line.match(R.LOOKALIKE_NAMES);
         if (cl) F.add('WARN', 'CREDENTIAL-NAME', `Identifier that looks like a credential: ${cl[0]}`, { file: p, line: ln, portal: 'Held for a reviewer ("Uses a credential from the user\'s machine")', detail: 'Lore Lookup (a lock ID) and Cutproof (short token-counting names) were held for names like this; renaming cleared it. See reference/lessons.md.', fix: 'Rename it to say what it is (e.g. lockId).' });
         if (!isTest) for (const re of R.ENV_READ) {
           if (re.source.startsWith('%') && !R.BATCH_EXT.test(p)) continue;
@@ -630,7 +672,7 @@ export function checkCode(ctx, F, readme) {
           F.add('FAIL', 'PERMISSIONS', 'Code that changes Claude\'s permission settings', { file: p, line: ln, detail: trimmed.slice(0, 160), fix: 'Plugins must not change permission settings; the security scan rejects it.' });
       }
       // Font files anywhere in code, and bundled images, read as files "the plugin's code could run".
-      // Cutproof's sample script named arialbd.ttf; Lore Lookup's test opened its icon. Both were held.
+      // Cutproof's sample script named a Windows font file; Lore Lookup's test opened its icon. Both were held.
       if (isCode) for (const am of line.matchAll(/[\w.-]+\.(ttf|otf|woff2?|png|jpe?g|gif|webp|svg|ico)\b/gi)) {
         const n = am[0].toLowerCase();
         if (/\.(ttf|otf|woff2?)$/.test(n) || bundledImages.has(n)) {
@@ -638,7 +680,7 @@ export function checkCode(ctx, F, readme) {
           break;
         }
       }
-      if (isTest) return;
+      if (isTest || !asEvidence(i)) return;
       for (const eff of R.SIDE_EFFECTS) if (eff.code.test(line)) evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140) });
       for (const m of line.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
         const h = m[1].toLowerCase();
@@ -667,7 +709,8 @@ export function checkCode(ctx, F, readme) {
   const docFiles = [readme?.path, ...[...files.keys()].filter(p => p.startsWith(base) && isInstr(p))].filter(Boolean);
   for (const dp of [...new Set(docFiles)]) {
     const t = files.get(dp)?.data.toString('utf8') || '';
-    for (const sentence of t.split(/(?<=[.!?])\s+|\n(?=\s*[-*] )/)) {
+    // Sentences, and every line on its own (table rows and list items aren't sentences).
+    for (const sentence of t.split(/(?<=[.!?])\s+|\n/)) {
       if (!/\b(reads?|reading|scans?|parses?|opens?|loads?|looks? (at|in)|uses?|lists?|finds?)\b/i.test(sentence)) continue;
       for (const [re, what, sev] of R.CHAT_HISTORY) {
         const m = sentence.match(re);
@@ -719,18 +762,18 @@ export function checkCode(ctx, F, readme) {
   // a host anywhere else is probably a link in a message.
   const netFiles = new Set(evidence.network.map(e => e.file));
   for (const [h, at] of hosts) {
-    if (rtext.toLowerCase().includes(h)) continue;
+    if (rfull.toLowerCase().includes(h)) continue;
     const maybeContacted = netFiles.has(at.file) || isInstr(at.file);
     F.add(maybeContacted ? 'WARN' : 'INFO', 'DISCLOSE-HOST', `Host ${h} in the ${maybeContacted ? 'code' : 'text of a message or link'} isn't named in the README`, { file: at.file, line: at.line, policy: '2B, 3F', detail: maybeContacted ? 'List every domain the plugin contacts or tells Claude to fetch.' : 'No request code in this file, so it is probably a link; check it isn\'t contacted.', portal: maybeContacted ? 'Security scan ("Sends data to an undisclosed destination") if contacted' : null });
   }
   for (const nc of R.NEGATIVE_CLAIMS) {
-    const m = rtext.match(nc.re);
-    const after = m ? rtext.slice(m.index + m[0].length, m.index + m[0].length + 60) : '';
+    const m = rfull.match(nc.re);
+    const after = m ? rfull.slice(m.index + m[0].length, m.index + m[0].length + 60) : '';
     const qualified = /^.{0,40}\b(it didn't|it did not|that it|it doesn't own|other than|except|of its own|outside (its|the)|unless)\b/i.test(after);
-    if (m && !qualified && evidence[nc.effect].length) F.add('WARN', 'CLAIM-CHECK', `README says "${m[0]}" but the code has ${R.SIDE_EFFECTS.find(s => s.id === nc.effect).label}`, { file: readme.path, line: lineOf(rtext, m.index), policy: '2B', detail: evidence[nc.effect].slice(0, 3).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), fix: 'Read the code: either the claim needs a qualifier (e.g. "the plugin… ; the app it opens…") or the code is wrong.' });
+    if (m && !qualified && evidence[nc.effect].length) F.add('WARN', 'CLAIM-CHECK', `README says "${m[0]}" but the code has ${R.SIDE_EFFECTS.find(s => s.id === nc.effect).label}`, { file: readme.path, line: lineOf(rfull, m.index), policy: '2B', detail: evidence[nc.effect].slice(0, 3).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), fix: 'Read the code: either the claim needs a qualifier (e.g. "the plugin… ; the app it opens…") or the code is wrong.' });
   }
   // Unsupported use cases (4).
-  const allText = `${rtext}\n${ctx.manifest?.description || ''}`;
+  const allText = `${rfull}\n${ctx.manifest?.description || ''}`;
   for (const [re, what] of R.UNSUPPORTED) { const m = allText.match(re); if (m) F.add('INFO', 'POLICY-4', `Mentions something in an unsupported category: ${what}`, { policy: '4', detail: `"${m[0]}" — only a prompt to check; most mentions are harmless.` }); }
   return { effects, hosts: [...hosts.keys()], envReads: [...byName.keys()] };
 }
@@ -787,9 +830,13 @@ export function checkPersonal(ctx, F) {
     }
     const lp = text.match(R.LOCAL_USER_PATH);
     if (lp) F.add(R.TEST_PATH.test(p) ? 'INFO' : 'WARN', 'LOCAL-PATH', 'Path with a local user name', { file: p, line: lineOf(text, lp.index), detail: lp[0].replace(/(Users[\\/]+|home\/)([^\\/]{2})[^\\/]*/i, '$1$2…'), fix: 'Use a placeholder like C:\\Users\\<you> or ~.' });
-    for (const t of privateTerms) {
-      const m = text.match(t.re);
-      if (m) F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: lineOf(text, m.index), detail: `${t.source} (${t.file})`, fix: 'Remove it.' });
+    if (privateTerms.length) {
+      // Line by line, skipping very long lines, so a slow pattern can't stall the run.
+      const tl = text.split('\n');
+      for (const t of privateTerms) {
+        const k = tl.findIndex(l => l.length <= 4096 && t.re.test(l));
+        if (k >= 0) F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: k + 1, detail: `${t.source} (${t.file})`, fix: 'Remove it.' });
+      }
     }
   }
   for (const h of emailHits.values()) {

@@ -2,7 +2,7 @@
   "name": "seaready",
   "displayName": "Seaready",
   "version": "1.0.0",
-  "description": "Checks a plugin repository before you submit it to Anthropic's plugin directory, and fills in the submission form for you. It reports pass, warn and fail on the portal's blocking rules and the Directory Policy: names and name clashes, trigger wording, whether the README matches what the code does, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks and personal email addresses in commit history. Runs locally in Claude Code with Node.js and git, and makes no network requests.",
+  "description": "Checks a plugin repository before you submit it to Anthropic's plugin directory, and drafts answers for the submission form. It reports pass, warn and fail on many of the portal's blocking rules and on Directory Policy problems a script can find: names and name clashes, trigger wording, whether the README matches what the code does, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks and personal email addresses in commit history. Runs locally in Claude Code with Node.js and git, and makes no network requests.",
   "author": { "name": "Ablation Lab" },
   "homepage": "https://github.com/Ablation-Lab/seaready",
   "repository": "https://github.com/Ablation-Lab/seaready",

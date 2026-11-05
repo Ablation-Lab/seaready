@@ -16,9 +16,9 @@ export function write(root, rel, content) {
   fs.writeFileSync(p, content);
 }
 
-export function git(root, args, email = NOREPLY) {
+export function git(root, args, email = NOREPLY, input) {
   return execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=.no-hooks',
-    '-c', 'user.name=Test Dev', '-c', `user.email=${email}`, ...args], { encoding: 'utf8', stdio: 'pipe' });
+    '-c', 'user.name=Test Dev', '-c', `user.email=${email}`, ...args], { encoding: 'utf8', stdio: 'pipe', input });
 }
 
 export function repo(files, { email } = {}) {

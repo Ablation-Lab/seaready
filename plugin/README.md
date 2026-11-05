@@ -1,6 +1,6 @@
 # Seaready
 
-Seaready checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It runs the portal's blocking rules and the Directory Policy against your repository, tells you what passes, what needs a look and what fails, and fills in a submission sheet with suggested answers for every step of the portal form.
+Seaready checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It runs many of the portal's blocking and hold rules, and checks for the Directory Policy problems a script can find, against your repository. It tells you what passes, what needs a look and what fails, and drafts a submission sheet with suggested answers for every step of the portal form, for you to check and paste.
 
 It grew out of submitting three plugins (Lore Lookup, Cutproof and SessionKeeper) and fixing what the portal held each time. Every problem we hit is now a check, tested on the commit from before the fix.
 
@@ -20,30 +20,30 @@ On older versions, add the marketplace first with `/plugin marketplace add Ablat
 
 | Area | What it looks for |
 |---|---|
-| Names | plugin and skill names against the portal's rules; "claude" or "anthropic" in skill names; clashes and look-alikes among the directory's existing listings; listings with similar descriptions (policy 2C) |
+| Names | plugin and skill names against the portal's rules; "claude" or "anthropic" in skill names; clashes and look-alikes among the directory's listings; listings with similar descriptions (policy 2C). Claude also searches GitHub and the web for the name, because plugins outside the directory can share it |
 | Trigger wording | over-broad phrases in skill and command descriptions, such as "use whenever", "even if they haven't asked", "instead of using other tools" (policy 2A, 2C, 2D, 2E) |
-| README versus code | programs started, files written outside the project, registry and shortcut changes, start-up entries, network hosts, deletes; each compared with what the README says, plus README claims such as "makes no network requests" that the code contradicts (policy 2B, 3C) |
-| Chat history | code or docs that touch Claude Code transcripts, prompt history, memory files or conversation summaries, including an app the plugin starts (policy 1G) |
+| README versus code | programs started, files written outside the project, registry and shortcut changes, start-up entries, network hosts, deletes; each compared with the README's "what it runs, reads and writes" and Privacy sections, plus README claims such as "makes no network requests" that the code contradicts (policy 2B, 3C) |
+| Chat history | code, or docs, pointing at Claude Code's conversation files, prompt history, memory files or conversation summaries, including in an app the plugin starts (policy 1G) |
 | Reviewer material | at least three example prompts (3E), sample data and a section telling reviewers how to use it (3D), Privacy, Support, Troubleshooting sections |
-| Hidden text | zero-width and bidirectional characters, tag characters (with the hidden text decoded), stray variation selectors, look-alike letters from other alphabets, encoded blobs and instruction-like HTML comments (policy 2G) |
+| Hidden text | zero-width and bidirectional characters (in file contents and file names), tag characters (with the hidden text decoded), stray variation selectors, look-alike letters from other alphabets, encoded blobs and instruction-like HTML comments (policy 2G) |
 | Line endings | `.gitattributes` rules, checked by comparing a real `git archive` (made with GitHub's settings) with the stored files byte for byte; a warning when your own `core.autocrlf` makes local copies differ |
-| Scripts | shell-injection patterns (eval, `sh -c` with variables, variables in sed programs, Invoke-Expression, `exec` with built strings, `shell: true`), credential-like names, environment-variable reads, download-and-run commands, font and image names in code |
+| Scripts | shell-injection patterns (eval, `sh -c` with variables, variables in sed programs, Invoke-Expression, `exec` with built strings, `shell: true`), credential-like names, environment-variable reads, download URLs in messages, font and image names in code. Download-and-run commands (`curl … \| sh`, clone-and-install in one block) are checked in the README and in hook commands |
 | Personal data | personal email addresses in files and in every commit's author, committer and content (only GitHub noreply addresses pass), local user paths, and your own private words if you keep a list |
 | Listing fields | plugin.json name, version (and the same version in marketplace.json), description, author, licence, icon, documentation, support and privacy links; terms of service and classification (keywords, category, tags) flagged as optional |
-| Portal limits | file names, system files, symlinks, submodules, LFS pointers, file sizes and counts, binary files, hooks and MCP rules, and `claude plugin validate` |
+| Portal limits | file names, system files, symlinks, submodules, LFS pointers, file sizes and counts (files and folders), binary files, hooks and MCP rules, and `claude plugin validate` |
 
-Each finding says which policy section or portal rule it comes from, what the portal does about it (blocks, holds for a reviewer, warns), and how to fix it.
+Each finding says which policy section or portal rule it comes from, what the portal does about it (blocks, holds for a reviewer, warns), and how to fix it. It doesn't check everything the portal does: for example brand, publisher and fork look-alikes, minified code, and whether a plugin's scripts can be followed by the validator are left to the portal.
 
 ## Example prompts
 
 ```
 Check this plugin repo before I submit it to the plugin directory
-Run the submission check on C:\Projects\my-plugin and explain each FAIL
+Run the submission check on the sample repo that samples/make-sample.mjs made, and explain each FAIL
 Fill in the directory submission sheet for this plugin, with suggested data-handling answers
 Will my .gitattributes stop the portal validating this repo?
 ```
 
-Claude runs the checks, then reads the code the findings point at to judge the things a script can't (does the description match what the plugin does; is everything it writes and sends in the README), and finishes the sheet.
+Claude runs the checks, then reads the code the findings point at to judge the things a script can't (does the description match what the plugin does; is everything it writes and sends in the README; is the name used elsewhere), and finishes the sheet.
 
 ## Try it with the sample (for reviewers)
 
@@ -59,15 +59,27 @@ It prints the path of a new folder under your temp folder holding a two-commit g
 Run the submission check on <the folder it printed>
 ```
 
-The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code transcripts, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](https://github.com/Ablation-Lab/seaready/blob/main/samples/expected-results.md) lists everything it should report.
+The check ends with **NOT READY** and lists, among others: a reserved plugin name and a skill name containing "claude", an unquoted front matter value that stops it parsing, `.gitattributes` rewriting `install.cmd`, a script that greps Claude Code's conversation files, an undisclosed registry Run value and network request, hidden tag characters spelling "ignore the user", only two example prompts, and a personal email address in the first commit. [samples/expected-results.md](https://github.com/Ablation-Lab/seaready/blob/main/samples/expected-results.md) lists everything it should report.
+
+**About the pattern files.** `skills/submission-check/scripts/lib/rules.mjs` and `lib/checks.mjs` contain the words and patterns Seaready looks for in other plugins: registry keys, credential-shaped names, "dangerously-skip-permissions", the paths of Claude Code's conversation files. They are pattern data and finding messages. Nothing in them runs a program, reads those locations, writes a file or makes a request; the only code that does anything outside the process is in `check.mjs` (writing the report, starting `claude plugin validate`) and `lib/git.mjs` (starting git). The repository's `.plugin-check-allow.json` records each self-match with its reason, and Seaready's own report shows them as ALLOWED.
+
+**Developer note.** Seaready, our plugin submission checker, was built first and run on its own repository; the findings it raised there were fixed, and the matches that are its own pattern files are listed in `.plugin-check-allow.json` with reasons. It's our own pre-check; the directory's validation and Anthropic's reviewers make the actual decision.
 
 ## What it runs, reads and writes
 
-- **What it runs:** `node <skill folder>/scripts/check.mjs <repo>`. Nothing is pre-approved, so Claude Code asks before it runs. The script starts `git` (read-only commands: rev-parse, ls-tree, cat-file, archive, log, diff, ls-files, config, remote) and, if the `claude` CLI is installed, `claude plugin validate` on a temporary copy of the plugin folder (skip it with `--no-validate`). It never runs the checked plugin's own scripts.
-- **What it reads:** the repository you point it at, through git (committed files, history, and your git config for line endings); `.privacy/patterns.txt` in that repo if there is one, or a list you pass with `--private-terms`; and two caches Claude Code keeps, read only, for the name check: `~/.claude/plugins/plugin-directory-cache-v2.json` (the directory's listings) and `~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` (marketplaces you've added).
-- **What it writes:** `report.md`, `report.json` and `submission-sheet.md` in `<repo>/.plugin-check/`, which gets its own `.gitignore` so it's never committed (or in the folder you pass with `--out`). For `claude plugin validate` it writes a copy of the plugin folder in your temp folder and deletes it straight after. The sample script writes one new folder under your temp folder (or one you name) and runs git inside it.
+- **What it runs:**
+  - `node <skill folder>/scripts/check.mjs <repo>`. Nothing is pre-approved, so Claude Code asks before it runs.
+  - `git`, read-only. In your repository: `rev-parse`, `symbolic-ref`, `rev-list --count`, `config --get`, `remote get-url` and `ls-files`. Everything that reads file contents and history (`ls-tree`, `cat-file`, `archive`, `log`) runs in a temporary empty git folder that borrows your repo's objects and has no config of its own, so a repo's own git settings (filters, signing programs) can't run anything.
+  - If the `claude` CLI is installed: `claude plugin validate` on a temporary copy of the plugin folder (skip it with `--no-validate`). It gets Seaready's environment minus Claude Code's session variables, and the claude CLI may contact Anthropic itself.
+  - Programs run in an empty temporary folder, found through absolute PATH entries only. It never runs the checked plugin's own scripts.
+  - In the judgement step, Claude may run `gh search` or a web search for the plugin's name (it asks first if you haven't asked for a name check).
+- **What it reads:**
+  - the repository you point it at: committed files and history through git, the working-tree files (to see what's uncommitted), your git config values for line endings, `.git/info/attributes`, and `.plugin-check-allow.json` if the repo has one;
+  - `.privacy/patterns.txt` in that repo if there is one, or a list you pass with `--private-terms`;
+  - two caches Claude Code keeps, read only, for the name check: `~/.claude/plugins/plugin-directory-cache-v2.json` (the directory's listings) and `~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` (marketplaces you've added). `--config-dir <folder>` points it at another Claude config folder.
+- **What it writes:** `report.md`, `report.json` and `submission-sheet.md` in `<repo>/.plugin-check/`, which gets its own `.gitignore` so it's never committed (or in the folder you pass with `--out`). It refuses to write there if that folder is committed or is a link. In your temp folder it makes the empty git folder, an empty working folder and, for `claude plugin validate`, a copy of the plugin folder; the first and last are deleted when the run ends. The sample script writes one new folder under your temp folder (or one you name) and runs git inside it.
 - **What it changes:** nothing else. It doesn't edit, commit or push your repo, doesn't submit anything, and doesn't change Claude Code's settings.
-- **Network:** none. It makes no requests; the name check uses Claude Code's local copy of the directory.
+- **Network:** the script makes no requests; the name check uses Claude Code's local copy of the directory. The only network use is Claude's own search in the judgement step, with the plugin's name as the query.
 
 ## Where it works
 
@@ -77,30 +89,32 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
 
 ## Privacy
 
-Seaready has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. The report masks email addresses and never prints the words in your private list. What Claude reads from the report reaches Anthropic the way anything in your conversation does.
+Seaready has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check, including commit authors' email addresses, and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. Every finding and the JSON report are passed through one redaction step: email addresses other than GitHub noreply and example addresses are masked (`ab…@gmail.com`), and matches of your private terms are replaced with «private term N». What Claude reads from the report reaches Anthropic the way anything in your conversation does. If Claude searches GitHub or the web for the plugin's name, that name is the search query.
 
 ## How it's built
 
 - **JavaScript (Node.js ES modules).** `scripts/check.mjs` and the modules in `scripts/lib/` are plain JavaScript files that Node runs directly, with no packages to install. ES modules use `import`/`export` to share code between files. The checks are mostly regular expressions applied line by line, plus a few parsers.
-- **git and the tar format.** `git archive` writes a commit's files as a tar file, the same way GitHub builds its downloads, applying the rules in `.gitattributes`. A tar file is a simple sequence of 512-byte headers and file contents; `lib/tar.mjs` reads it in memory. Comparing those bytes with the stored blobs (`git cat-file`) shows exactly which files an archive would change. Every git command is started with an argument list rather than a shell, and with settings that stop a repo's config from running programs.
+- **git, alternates and the tar format.** `git archive` writes a commit's files as a tar file, the same way GitHub builds its downloads, applying the committed `.gitattributes`. Seaready runs it in a throwaway bare repository whose `objects/info/alternates` file points at your repo's objects, so it reads your commits without your repo's config. A tar file is a simple sequence of 512-byte headers and file contents; `lib/tar.mjs` reads it in memory. Comparing those bytes with the stored blobs (`git cat-file`) shows exactly which files an archive would change. Every git command is started with an argument list rather than a shell.
 - **Markdown with YAML front matter.** A skill is a `SKILL.md` file: Markdown instructions for Claude, with a YAML block between `---` lines at the top holding its name and description. YAML is a "key: value" format with traps (an unquoted value starting with `[` or containing `: ` breaks it); `lib/frontmatter.mjs` is a strict reader that reports those traps rather than guessing.
 - **JSON.** `plugin.json` (the plugin's manifest), `marketplace.json` (how Claude Code installs it from this repo) and `report.json` (the results, for Claude to read).
-- **Unicode.** Text is decoded as UTF-8 and each character checked by its code point, so invisible characters can be named and located. The checker writes every character it looks for as a `\u` escape.
+- **Unicode.** Text is decoded as UTF-8 and each character checked by its code point, so invisible characters can be named and located. The checker's source names every such character by its number, never as the character itself.
+- **Safe output.** `lib/safety.mjs` renders anything quoted from the checked repo so it can't change the report: line breaks and invisible characters become visible codes, Markdown punctuation in names is escaped, and code lines go in code blocks fenced longer than anything inside them.
 
 ## Design decisions
 
-- **Script plus judgement.** The script does what can be checked mechanically and leaves Claude a short list of things that need reading (does the description match the code; is every write in the README). Neither alone is enough.
+- **Script plus judgement.** The script does what can be checked mechanically and leaves Claude a short list of things that need reading (does the description match the code; is every write in the README; is the name used outside the directory). Neither alone is enough.
 - **Check what GitHub serves, not your folder.** The portal reads your pushed commit. The script reads committed files through `git archive` with GitHub's settings, so uncommitted edits and local line-ending conversion can't hide or invent problems. `--worktree` is there for checking before a commit.
+- **Treat the checked repo as hostile.** It might be someone else's plugin you're vetting. Its git config can't run programs, its text can't add instructions to the report, and its contents are redacted before anything is written.
 - **Fail, warn or info, tied to the portal's own results.** FAIL means the portal blocks or stops, or a clear policy problem; WARN means likely held for a reviewer or worth fixing; INFO is for the sheet.
-- **Offline.** Name clashes come from Claude Code's local copy of the directory, so the check needs no network and sends nothing. The copy can be out of date; the report shows its date.
+- **Offline script, online judgement.** The script needs no network and sends nothing; name clashes come from Claude Code's local copy of the directory, which can be out of date (the report shows its date) and doesn't include unlisted plugins. That gap is why Claude searches GitHub and the web for the name: this plugin's own first name, Tollgate, turned out to be taken by a plugin on GitHub that the directory copy didn't list.
 - **No email addresses built in.** Rather than knowing your personal address, it fails every commit that isn't from a GitHub noreply address, and any personal webmail address in files or history.
-- **Allowed exceptions are visible.** A committed `.plugin-check-allow.json` can mark a finding as allowed, but only with a reason, and allowed findings still appear in the report. This repository uses it for its own rule tables, which contain the patterns they look for.
+- **Allowed exceptions are visible.** A committed `.plugin-check-allow.json` can mark a finding as allowed, but only with a reason, and allowed findings still appear in the report. An `EVIDENCE` entry marks a file as pattern data, so it doesn't count as behaviour in the README-versus-code check.
 
 ## How it compares
 
 - **The portal's Validate** is the authority, and runs after you push. Seaready runs before, on your machine, and adds the policy and disclosure checks that only Anthropic's reviewers and security scan apply later.
-- **`claude plugin validate`** checks that files parse and match the schema. Seaready runs it for you and goes much further.
-- **Directory Preflight** (an existing directory listing) checks a plugin against the pre-submission checklist's rules. Seaready also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, and writes the submission sheet.
+- **`claude plugin validate`** checks that files parse and match the schema, and now runs a subset of the directory's checks. Seaready runs it for you and adds the rest above.
+- **Directory Preflight** (an existing directory listing) checks a plugin against the pre-submission checklist's rules. Seaready also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, and drafts the submission sheet.
 
 ## The name
 
@@ -117,6 +131,8 @@ A ship is checked before it is cleared to sail; Seaready does the same for a plu
 - **"is not a git repository"**: commit the plugin first; the portal reads from GitHub.
 - **"plugin path … has no committed files"**: the folder name is wrong, or it isn't committed yet. Try `--worktree`.
 - **"Couldn't check name clashes"**: open the plugin directory once in Claude Code (`/plugin`), then run again.
+- **"CHECK-ERROR … stopped on unexpected input"**: a file has a field of the wrong type; the rest of the report still ran, and the detail says what failed.
+- **"… is committed in this repo" or "… is a link"**: pass `--out` with another folder.
 - **Every file is reported as changed by line endings**: check `.gitattributes`; the EOL-ARCHIVE finding lists the files.
 - **`claude plugin validate` is slow or fails to start**: run with `--no-validate` and run it yourself.
 

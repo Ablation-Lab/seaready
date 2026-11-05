@@ -6,7 +6,7 @@
     {
       "name": "seaready",
       "source": "./plugin",
-      "description": "Checks a plugin repository against the plugin directory's rules before you submit it, and fills in the submission form.",
+      "description": "Checks a plugin repository against the plugin directory's rules before you submit it, and drafts answers for the submission form.",
       "version": "1.0.0",
       "category": "development",
       "tags": ["plugins", "review", "checklist"]

@@ -14,16 +14,15 @@ export function splitFrontmatter(text) {
   return { raw: m[1], body: t.slice(m[0].length), startLine, bodyStartLine: m[1].split('\n').length + 3 };
 }
 
-function unquote(v, line, errors) {
-  if (v.startsWith('"')) {
-    if (!/^"(?:[^"\\]|\\.)*"\s*(#.*)?$/.test(v)) { errors.push({ line, msg: 'unterminated or malformed double-quoted value' }); return v; }
-    try { return JSON.parse(v.replace(/\s*#.*$/, '').trim()); } catch { return v.slice(1, -1); }
-  }
-  if (v.startsWith("'")) {
-    if (!/^'(?:[^']|'')*'\s*(#.*)?$/.test(v)) { errors.push({ line, msg: 'unterminated or malformed single-quoted value' }); return v; }
-    return v.replace(/\s*#.*$/, '').trim().slice(1, -1).replace(/''/g, "'");
-  }
-  return null;
+// A quoted value, which may continue over indented lines (YAML folds the line breaks to spaces).
+// Only text after the closing quote can be a comment; a # inside the quotes is kept.
+function unquote(v, cont, line, errors) {
+  if (v[0] !== '"' && v[0] !== "'") return null;
+  const joined = [v, ...cont.map(c => c.trim())].join(' ');
+  const m = v[0] === '"' ? joined.match(/^"((?:[^"\\]|\\.)*)"\s*(#.*)?$/) : joined.match(/^'((?:[^']|'')*)'\s*(#.*)?$/);
+  if (!m) { errors.push({ line, msg: `unterminated or malformed ${v[0] === '"' ? 'double' : 'single'}-quoted value` }); return v; }
+  if (v[0] === "'") return m[1].replace(/''/g, "'");
+  try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]; }
 }
 
 function checkPlain(key, v, line, errors, notes) {
@@ -92,14 +91,20 @@ export function parseFrontmatter(text) {
       continue;
     }
     if (/^[|>][-+0-9]*$/.test(rest)) { data[key] = cont.map(c => c.trim()).join(rest[0] === '|' ? '\n' : ' ').trim(); continue; }
-    const q = unquote(rest, lineNo, errors);
-    if (q !== null) {
-      data[key] = q;
-      if (cont.length) data[key] += ' ' + cont.map(c => c.trim()).join(' ');
-      continue;
+    const q = unquote(rest, cont, lineNo, errors);
+    if (q !== null) { data[key] = q; continue; }
+    if (rest.startsWith('#')) {
+      notes.push({ line: lineNo, msg: `value of "${key}" starts with "#", so YAML reads it as a comment and the value is empty; quote it` });
+      data[key] = ''; continue;
     }
     const r = checkPlain(key, rest, lineNo, errors, notes);
     if (r.flow) flow[key] = r.flow;
+    // A plain value that continues on indented lines follows the same rules on every line.
+    if (!r.flow) cont.forEach((c, k) => {
+      const t = c.trim();
+      if (/:\s/.test(t) || /:$/.test(t)) errors.push({ line: lineNo + k + 1, msg: `a continuation line of "${key}" contains ": ", which YAML reads as a nested key; quote the value` });
+      if (/(^|\s)#/.test(t)) notes.push({ line: lineNo + k + 1, msg: `a continuation line of "${key}" contains " #": YAML drops the rest as a comment` });
+    });
     let value = rest.replace(/\s+#.*$/, '');
     if (cont.length) value += ' ' + cont.map(c => c.trim()).join(' ');
     if (value === 'true') data[key] = true;

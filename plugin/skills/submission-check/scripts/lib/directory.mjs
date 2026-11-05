@@ -52,7 +52,13 @@ export function loadListings(configDir) {
 export function findClashes(listings, { name, displayName }, ownRepoKey) {
   const exact = [], similar = [];
   const n = norm(name), dn = norm(displayName);
-  const own = it => ownRepoKey && it.repo && it.repo.toLowerCase().replace(/^https?:\/\//, '').replace(/\.git$/, '').startsWith(ownRepoKey);
+  // Our own listing: the same repository exactly (optionally followed by #folder or /path), so a
+  // repo called notes-pro isn't mistaken for notes.
+  const own = it => {
+    if (!ownRepoKey || !it.repo) return false;
+    const r = it.repo.toLowerCase().replace(/^https?:\/\//, '').replace(/\.git(?=$|[#/])/, '');
+    return r === ownRepoKey || r.startsWith(ownRepoKey + '#') || r.startsWith(ownRepoKey + '/');
+  };
   const seen = new Set();
   for (const it of listings.items) {
     const key = `${it.name}|${it.displayName}|${it.repo}`;

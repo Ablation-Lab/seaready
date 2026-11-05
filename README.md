@@ -1,6 +1,6 @@
 # Seaready
 
-Seaready is a Claude Code plugin that checks a plugin repository before you submit it to Anthropic's plugin directory, and fills in the submission form for you. The plugin lives in [plugin/](plugin/); its README, [plugin/README.md](plugin/README.md), describes what it checks, what it runs, reads and writes, and how to try it.
+Seaready is a Claude Code plugin that checks a plugin repository before you submit it to Anthropic's plugin directory, and drafts answers for the submission form. The plugin lives in [plugin/](plugin/); its README, [plugin/README.md](plugin/README.md), describes what it checks, what it runs, reads and writes, and how to try it.
 
 ## Install
 
