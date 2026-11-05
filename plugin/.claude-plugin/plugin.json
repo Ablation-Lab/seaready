@@ -1,0 +1,15 @@
+{
+  "name": "tollgate",
+  "displayName": "Tollgate",
+  "version": "1.0.0",
+  "description": "Checks a plugin repository before you submit it to Anthropic's plugin directory, and fills in the submission form for you. It reports pass, warn and fail on the portal's blocking rules and the Directory Policy: names and name clashes, trigger wording, whether the README matches what the code does, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks and personal email addresses in commit history. Runs locally in Claude Code with Node.js and git, and makes no network requests.",
+  "author": { "name": "Ablation Lab" },
+  "homepage": "https://github.com/Ablation-Lab/tollgate",
+  "repository": "https://github.com/Ablation-Lab/tollgate",
+  "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/Ablation-Lab/tollgate/blob/main/plugin/README.md",
+  "supportUrl": "https://github.com/Ablation-Lab/tollgate/issues",
+  "privacyPolicyUrl": "https://github.com/Ablation-Lab/tollgate/blob/main/plugin/README.md#privacy",
+  "keywords": ["plugin-directory", "submission", "pre-flight", "policy", "checklist"]
+}
