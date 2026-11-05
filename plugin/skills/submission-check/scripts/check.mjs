@@ -317,7 +317,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   const meta = { repoRoot, repoName: path.basename(repoRoot), commit, ref: opts.ref, worktree: opts.worktree, pluginDir, pluginName: redact(manifest?.displayName || manifest?.name),
     rulesDate: RULES_DATE, notes, remote, branch, unpushed, date: new Date().toISOString().slice(0, 10), counts: c };
   const judgement = [
-    'Name clashes: search GitHub and the web (community skill directories too) for the plugin and skill names; the directory copy only covers listed plugins.',
+    'REQUIRED, every run: the name and overlap search. Search GitHub, the plugin directory (web) and the web, including community skill directories, for the plugin and skill names and for similar plugins; this script only saw the offline directory copy. Record sources, queries and results first in the Judgement section, with suggested "How it compares" text for the user to paste (never edit the repo).',
     'Policy 2B: does each skill/command description match what it really does, with no promised features it lacks?',
     'README vs code: read the scripts the skill tells Claude to run. Is every program started, file read or written (with its location), registry or shortcut change, and network request described in the README? Add anything missing as a FAIL.',
     'Does the README\'s Privacy section match the data-handling answers in the sheet?',

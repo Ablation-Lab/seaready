@@ -1,6 +1,11 @@
 # Seaready
 
-Seaready checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It runs many of the portal's blocking and hold rules, and checks for the Directory Policy problems a script can find, against your repository. It tells you what passes, what needs a look and what fails, and drafts a submission sheet with suggested answers for every step of the portal form, for you to check and paste.
+Seaready checks a Claude Code plugin before you submit it to Anthropic's plugin directory. It works in two parts:
+
+- **A local script**, which makes no network requests. It runs many of the portal's blocking and hold rules, and checks for the Directory Policy problems a script can find, against your repository. Its name check covers only what it can see offline: the listings in Claude Code's local copy of the directory.
+- **Claude, following the skill.** On every run it searches GitHub, the plugin directory and the web for plugins with the same or a similar name and for plugins that do similar things, then reads the code the script's findings point at to judge what a script can't. So the skill as a whole does use the network.
+
+You get a report of what passes, what needs a look and what fails, suggested "How it compares" text for your README, and a drafted submission sheet with answers for every step of the portal form, for you to check and paste. Seaready never edits the repo it checks.
 
 It grew out of submitting three plugins (Lore Lookup, Cutproof and SessionKeeper) and fixing what the portal held each time. Every problem we hit is now a check, tested on the commit from before the fix.
 
@@ -20,7 +25,8 @@ On older versions, add the marketplace first with `/plugin marketplace add Ablat
 
 | Area | What it looks for |
 |---|---|
-| Names | plugin and skill names against the portal's rules; "claude" or "anthropic" in skill names; clashes and look-alikes among the directory's listings; listings with similar descriptions (policy 2C). Claude also searches GitHub and the web for the name, because plugins outside the directory can share it |
+| Names (script, offline) | plugin and skill names against the portal's rules; "claude" or "anthropic" in skill names; clashes and look-alikes among the listings in Claude Code's local copy of the directory; listings there with similar descriptions (policy 2C) |
+| Names and overlap (Claude, online, every run) | searches of GitHub (repos, other plugins' plugin.json and SKILL.md), the plugin directory's live listings and the web, including community skill directories, for the same or similar names and for plugins that do similar things. Results go in the report with suggested "How it compares" text for your README |
 | Trigger wording | over-broad phrases in skill and command descriptions, such as "use whenever", "even if they haven't asked", "instead of using other tools" (policy 2A, 2C, 2D, 2E) |
 | README versus code | programs started, files written outside the project, registry and shortcut changes, start-up entries, network hosts, deletes; each compared with the README's "what it runs, reads and writes" and Privacy sections, plus README claims such as "makes no network requests" that the code contradicts (policy 2B, 3C) |
 | Chat history | code, or docs, pointing at Claude Code's conversation files, prompt history, memory files or conversation summaries, including in an app the plugin starts (policy 1G) |
@@ -72,14 +78,14 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
   - `git`, read-only. In your repository: `rev-parse`, `symbolic-ref`, `rev-list --count`, `config --get`, `remote get-url` and `ls-files`. Everything that reads file contents and history (`ls-tree`, `cat-file`, `archive`, `log`) runs in a temporary empty git folder that borrows your repo's objects and has no config of its own, so a repo's own git settings (filters, signing programs) can't run anything.
   - If the `claude` CLI is installed: `claude plugin validate` on a temporary copy of the plugin folder (skip it with `--no-validate`). It gets Seaready's environment minus Claude Code's session variables, and the claude CLI may contact Anthropic itself.
   - Programs run in an empty temporary folder, found through absolute PATH entries only. It never runs the checked plugin's own scripts.
-  - In the judgement step, Claude may run `gh search` or a web search for the plugin's name (it asks first if you haven't asked for a name check).
+  - On every run, Claude searches for name clashes and similar plugins: `gh search repos` and `gh search code` if the GitHub CLI is installed, and its own web search (GitHub, claude.com for the plugin directory, community skill directories). The queries are the plugin and skill names and a few words for what the plugin does.
 - **What it reads:**
   - the repository you point it at: committed files and history through git, the working-tree files (to see what's uncommitted), your git config values for line endings, `.git/info/attributes`, and `.plugin-check-allow.json` if the repo has one;
   - `.privacy/patterns.txt` in that repo if there is one, or a list you pass with `--private-terms`;
   - two caches Claude Code keeps, read only, for the name check: `~/.claude/plugins/plugin-directory-cache-v2.json` (the directory's listings) and `~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` (marketplaces you've added). `--config-dir <folder>` points it at another Claude config folder.
 - **What it writes:** `report.md`, `report.json` and `submission-sheet.md` in `<repo>/.plugin-check/`, which gets its own `.gitignore` so it's never committed (or in the folder you pass with `--out`). It refuses to write there if that folder is committed or is a link. In your temp folder it makes the empty git folder, an empty working folder and, for `claude plugin validate`, a copy of the plugin folder; the first and last are deleted when the run ends. The sample script writes one new folder under your temp folder (or one you name) and runs git inside it.
-- **What it changes:** nothing else. It doesn't edit, commit or push your repo, doesn't submit anything, and doesn't change Claude Code's settings.
-- **Network:** the script makes no requests; the name check uses Claude Code's local copy of the directory. The only network use is Claude's own search in the judgement step, with the plugin's name as the query.
+- **What it changes:** nothing else. Neither the script nor Claude edits, commits or pushes the repo it checks; suggested fixes and "How it compares" text go in the report for you to apply. It doesn't submit anything or change Claude Code's settings.
+- **Network:** the script makes no requests; its name check uses Claude Code's local copy of the directory. The skill as a whole does use the network: on every run Claude searches GitHub, the plugin directory and the web, with the plugin and skill names and a short description of what the plugin does as the queries.
 
 ## Where it works
 
@@ -89,7 +95,7 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
 
 ## Privacy
 
-Seaready has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check, including commit authors' email addresses, and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. Every finding and the JSON report are passed through one redaction step: email addresses other than GitHub noreply and example addresses are masked (`ab…@gmail.com`), and matches of your private terms are replaced with «private term N». What Claude reads from the report reaches Anthropic the way anything in your conversation does. If Claude searches GitHub or the web for the plugin's name, that name is the search query.
+Seaready has no server, account or telemetry and collects nothing. Everything happens on your computer. It reads the repository you ask it to check, including commit authors' email addresses, and Claude Code's local copy of the directory listings, and writes its report and sheet next to your repository. Every finding and the JSON report are passed through one redaction step: email addresses other than GitHub noreply and example addresses are masked (`ab…@gmail.com`), and matches of your private terms are replaced with «private term N». What Claude reads from the report reaches Anthropic the way anything in your conversation does. On every run Claude searches GitHub and the web: the plugin and skill names, and a few words describing what the plugin does, are sent as search queries (to GitHub through the GitHub CLI, and to Claude's web search). Nothing else from your repo is sent.
 
 ## How it's built
 
@@ -106,15 +112,21 @@ Seaready has no server, account or telemetry and collects nothing. Everything ha
 - **Check what GitHub serves, not your folder.** The portal reads your pushed commit. The script reads committed files through `git archive` with GitHub's settings, so uncommitted edits and local line-ending conversion can't hide or invent problems. `--worktree` is there for checking before a commit.
 - **Treat the checked repo as hostile.** It might be someone else's plugin you're vetting. Its git config can't run programs, its text can't add instructions to the report, and its contents are redacted before anything is written.
 - **Fail, warn or info, tied to the portal's own results.** FAIL means the portal blocks or stops, or a clear policy problem; WARN means likely held for a reviewer or worth fixing; INFO is for the sheet.
-- **Offline script, online judgement.** The script needs no network and sends nothing; name clashes come from Claude Code's local copy of the directory, which can be out of date (the report shows its date) and doesn't include unlisted plugins. That gap is why Claude searches GitHub and the web for the name: this plugin's own first name, Tollgate, turned out to be taken by a plugin on GitHub that the directory copy didn't list.
+- **Offline script, required online search.** The script needs no network and sends nothing; its name check uses Claude Code's local copy of the directory, which can be out of date (the report shows its date) and doesn't include unlisted plugins. That gap is why Claude's search of GitHub, the plugin directory and the web is a required step on every run, not an option: this plugin's own first name, Tollgate, turned out to be taken by a plugin on GitHub that the directory copy didn't list.
+- **Read-only, with suggestions.** Seaready never edits the repo it checks, even to add the "How it compares" text it drafts. You (or whoever is building the plugin) paste it in, so every change to your repo is yours.
 - **No email addresses built in.** Rather than knowing your personal address, it fails every commit that isn't from a GitHub noreply address, and any personal webmail address in files or history.
 - **Allowed exceptions are visible.** A committed `.plugin-check-allow.json` can mark a finding as allowed, but only with a reason, and allowed findings still appear in the report. An `EVIDENCE` entry marks a file as pattern data, so it doesn't count as behaviour in the README-versus-code check.
 
 ## How it compares
 
 - **The portal's Validate** is the authority, and runs after you push. Seaready runs before, on your machine, and adds the policy and disclosure checks that only Anthropic's reviewers and security scan apply later.
-- **`claude plugin validate`** checks that files parse and match the schema, and now runs a subset of the directory's checks. Seaready runs it for you and adds the rest above.
-- **Directory Preflight** (an existing directory listing) checks a plugin against the pre-submission checklist's rules. Seaready also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, and drafts the submission sheet.
+- **`claude plugin validate`** checks that files parse and match the schema, and runs a subset of the directory's checks. Seaready runs it for you and adds the rest above.
+- **Directory Preflight** (in the directory) checks a plugin against the pre-submission checklist's rules. Seaready also covers the Directory Policy, README-versus-code disclosure, git history (emails, private words), line endings in a real archive, an online name and overlap search, and drafts the submission sheet.
+- **protogrid** (in the directory) helps with MCP servers, including checking one before a directory submission. Seaready checks whole plugins (skills, commands, hooks, MCP) and their repository.
+- **Community plugin validators** (validate-plugin, plugin-validator and claude-plugin-validation on skill sites) check a plugin's structure and plugin.json. Seaready checks those too, plus policy, disclosure, history and hidden text.
+- **jadlis-plugin-builder** and **cc-third-party** (on GitHub) help build and release plugins, or vet third-party plugins before installing them. Seaready is a pre-submission check, and is also safe to run on a plugin you don't trust: it never runs its code or follows its git config.
+
+This list came from Seaready's own name and overlap search on 2026-11-05.
 
 ## The name
 

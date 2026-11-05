@@ -2,8 +2,10 @@
   "name": "seaready",
   "displayName": "Seaready",
   "version": "1.0.0",
-  "description": "Checks a plugin repository before you submit it to Anthropic's plugin directory, and drafts answers for the submission form. It reports pass, warn and fail on many of the portal's blocking rules and on Directory Policy problems a script can find: names and name clashes, trigger wording, whether the README matches what the code does, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks and personal email addresses in commit history. Runs locally in Claude Code with Node.js and git, and makes no network requests.",
-  "author": { "name": "Ablation Lab" },
+  "description": "Checks a plugin repository before you submit it to Anthropic's plugin directory, and drafts answers for the submission form. Its script runs locally with Node.js and git and makes no network requests. The script reports pass, warn and fail on many of the portal's blocking rules and on Directory Policy problems a script can find: trigger wording, whether the README matches what the code does, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks, personal email addresses in commit history, and name clashes with the listings it can see offline (Claude Code's local copy of the directory). On every run the skill then has Claude search GitHub, the plugin directory and the web for name clashes and similar plugins, so the skill as a whole does use the network; it reports what it finds with suggested \"How it compares\" text, and never edits the repo it checks.",
+  "author": {
+    "name": "Ablation Lab"
+  },
   "homepage": "https://github.com/Ablation-Lab/seaready",
   "repository": "https://github.com/Ablation-Lab/seaready",
   "license": "MIT",
@@ -11,5 +13,11 @@
   "documentationUrl": "https://github.com/Ablation-Lab/seaready/blob/main/plugin/README.md",
   "supportUrl": "https://github.com/Ablation-Lab/seaready/issues",
   "privacyPolicyUrl": "https://github.com/Ablation-Lab/seaready/blob/main/plugin/README.md#privacy",
-  "keywords": ["plugin-directory", "submission", "pre-flight", "policy", "checklist"]
+  "keywords": [
+    "plugin-directory",
+    "submission",
+    "pre-flight",
+    "policy",
+    "checklist"
+  ]
 }
