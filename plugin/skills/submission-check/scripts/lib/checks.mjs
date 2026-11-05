@@ -700,7 +700,9 @@ export function checkReadme(ctx, F) {
   const cands = [...files.keys()].filter(p => p.startsWith(base) && /^readme(\.md|\.markdown|\.txt)?$/i.test(p.slice(base.length)));
   const p = cands.find(x => /README\.md$/.test(x)) || cands[0];
   if (!p) { F.add('FAIL', 'README', 'No README in the plugin folder', { portal: 'Blocks ("README missing")', fix: 'Add README.md (at least 40 words outside code blocks) to the plugin folder; the directory shows it as the listing.' }); return null; }
-  const text = files.get(p).data.toString('utf8');
+  // CRLF read as LF (the line numbers stay the same): every README check below works line by line, and
+  // GitHub renders both the same.
+  const text = files.get(p).data.toString('utf8').replace(/\r\n/g, '\n');
   const readme = { path: p, text };
   // Only images and fonts that ship in the plugin folder matter for the "could run" hold.
   const bundledNames = new Set([...files.keys()].filter(f => f.startsWith(base) && (R.IMAGE_EXT.test(f) || R.FONT_EXT.test(f))).map(f => f.split('/').pop().toLowerCase()));
@@ -922,10 +924,13 @@ export function checkCode(ctx, F, readme) {
   if (warns.length) F.add('WARN', 'CHAT-HISTORY', 'Touches session state or mentions transcripts', { file: warns[0].file, line: warns[0].line, policy: '1G', detail: fmt(warns) + '\nCheck by reading the code: listing running sessions is different from reading what was said in them.' });
   // What the docs say the plugin (or the app it drives) reads.
   const docHits = [], otherToolHits = [];
+  const ownNames = [ctx.manifest?.name, ctx.manifest?.displayName, ...((ctx.components?.skills || []).map(s => s.name))].filter(x => typeof x === 'string' && x).map(normName);
   const docFiles = [readme?.path, ...[...files.keys()].filter(p => p.startsWith(base) && isInstr(p))].filter(Boolean);
   for (const dp of [...new Set(docFiles)]) {
-    const t = files.get(dp)?.data.toString('utf8') || '';
-    const otherTools = comparisonRanges(t);
+    const t = (files.get(dp)?.data.toString('utf8') || '').replace(/\r\n/g, '\n');
+    // Only the README has comparison sections: in SKILL.md, commands and agents every sentence is an
+    // instruction Claude follows, whatever heading it sits under.
+    const otherTools = dp === readme?.path ? comparisonRanges(t) : [];
     // Sentences, and every line on its own (table rows and list items aren't sentences).
     let from = 0;
     for (const sentence of t.split(/(?<=[.!?])\s+|\n/)) {
@@ -938,8 +943,10 @@ export function checkCode(ctx, F, readme) {
         const before = sentence.slice(0, m.index);
         if (/\b(never|not|doesn't|does not|don't|no|without|nor|instead of)\b[^,;]*$/i.test(before)) continue;
         const hit = { file: dp, line: lineOf(t, at >= 0 ? at : t.indexOf(sentence)), what, sev, text: sentence.trim().slice(0, 200) };
-        // In a section that compares this plugin with other tools, the sentence is about them.
-        if (at >= 0 && otherTools.some(([s, e]) => at >= s && at < e)) otherToolHits.push(hit); else docHits.push(hit);
+        // Downgraded only when it clearly describes another named tool: in a comparison section of the
+        // README, on a line that starts with that tool's name (bold, linked or in code) and the name
+        // isn't this plugin's. Anything else stays a FAIL.
+        if (at >= 0 && otherTools.some(([s, e]) => at >= s && at < e) && namesOtherTool(t, at, ownNames)) otherToolHits.push(hit); else docHits.push(hit);
         break;
       }
     }
@@ -1044,15 +1051,19 @@ export function disclosed(re, text) {
 // Blanks <style>, <script>, <template> and <? ?> blocks (an unclosed one runs to the end), found with
 // indexOf in one pass rather than a lazy regex that rescans to the end for every unclosed tag.
 function hideBlocks(text, blank) {
-  const lower = text.toLowerCase();
+  // Every position comes from the text itself (case-insensitive regexes with lastIndex), never from a
+  // lower-cased copy: lower-casing can change the length (İ becomes two characters).
+  const closers = { style: /<\/style/gi, script: /<\/script/gi, template: /<\/template/gi, '?': /\?>/g };
   let out = '', pos = 0;
   const open = /<(style|script|template)\b|<\?/gi;
   for (;;) {
     open.lastIndex = pos;
     const m = open.exec(text);
     if (!m) return out + text.slice(pos);
-    const close = m[0] === '<?' ? '?>' : `</${m[1].toLowerCase()}`;
-    let end = lower.indexOf(close, m.index + m[0].length);
+    const closeRe = closers[m[0] === '<?' ? '?' : m[1].toLowerCase()];
+    closeRe.lastIndex = m.index + m[0].length;
+    const cm = closeRe.exec(text);
+    let end = cm ? cm.index : -1;
     if (end < 0) end = text.length;
     else if (m[0] === '<?') end += 2;
     else { const gt = text.indexOf('>', end); end = gt < 0 ? text.length : gt + 1; }
@@ -1061,20 +1072,44 @@ function hideBlocks(text, blank) {
   }
 }
 
+const normName = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+// True when the line holding position `at` starts (after a list marker) with a tool's name written in
+// bold, as a link or in code, and that name isn't one of this plugin's own names.
+export function namesOtherTool(t, at, ownNames) {
+  const start = t.lastIndexOf('\n', at - 1) + 1;
+  let end = t.indexOf('\n', at); if (end < 0) end = t.length;
+  const line = t.slice(start, end).replace(/\r$/, '');
+  const m = line.match(/^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+)?(?:\*\*([^*\n]{1,80})\*\*|__([^_\n]{1,80})__|\[([^\]\n]{1,80})\]\(|`([^`\n]{1,80})`)/);
+  if (!m) return false;
+  const name = normName(m[1] ?? m[2] ?? m[3] ?? m[4]);
+  if (!name) return false;
+  return !ownNames.some(n => n && (name === n || name.includes(n) || n.includes(name)));
+}
+
 // Character ranges of sections that compare the plugin with other tools ("How it compares",
 // "Alternatives", "Similar tools", "Related projects", "See also"), each up to the next heading of the
-// same or a higher level. Found line by line.
+// same or a higher level. Found line by line; a heading inside an HTML comment or a code fence doesn't
+// count (a reader doesn't see it as a heading), and \r line endings are allowed.
 export function comparisonRanges(t) {
   const out = [];
   const lines = String(t).split('\n');
-  let pos = 0, open = null;
-  for (const line of lines) {
+  let pos = 0, open = null, inComment = false, fence = null;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    const at = pos;
+    pos += raw.length + 1;
+    if (inComment) { if (line.includes('-->')) inComment = false; continue; }
+    if (fence) { const f = line.trim(); if (f.startsWith(fence) && /^[`~]+$/.test(f)) fence = null; continue; }
+    const fm = line.match(/^ {0,3}(```|~~~)/);
+    if (fm) { fence = fm[1]; continue; }
+    const c = line.indexOf('<!--');
     const h = line.match(/^(#{1,6})[ \t]+(.*)$/);
-    if (h) {
-      if (open && h[1].length <= open.level) { out.push([open.start, pos]); open = null; }
-      if (!open && /^(how (it|this) compares|comparison|compared (with|to)|alternatives|similar (plugins|tools|skills|projects)|related (plugins|tools|skills|projects)|see also|other tools)\b/i.test(h[2].trim())) open = { level: h[1].length, start: pos };
-    }
-    pos += line.length + 1;
+    // Any visible heading at the same or a higher level ends a comparison section (failing closed: a
+    // section never runs on past where a reader sees it end).
+    if (h && open && h[1].length <= open.level) { out.push([open.start, at]); open = null; }
+    if (c >= 0 && line.indexOf('-->', c + 4) < 0) { inComment = true; continue; }
+    // Only a plain heading starts one: not one with a comment on its line.
+    if (h && c < 0 && !open && /^(how (it|this) compares|comparison|compared (with|to)|alternatives|similar (plugins|tools|skills|projects)|related (plugins|tools|skills|projects)|see also|other tools)\b/i.test(h[2].trim())) open = { level: h[1].length, start: at };
   }
   if (open) out.push([open.start, pos]);
   return out;
@@ -1092,7 +1127,8 @@ export function visibleText(md) {
   // so no position is scanned more than a few times however the fences and comments are arranged.
   const lineStart = [0];
   for (let i = 0; i < src.length; i++) if (src[i] === '\n') lineStart.push(i + 1);
-  const lineAt = k => src.slice(lineStart[k], k + 1 < lineStart.length ? lineStart[k + 1] - 1 : src.length);
+  // Without its line break, including the \r of a CRLF file, so fences are found in both.
+  const lineAt = k => src.slice(lineStart[k], k + 1 < lineStart.length ? lineStart[k + 1] - 1 : src.length).replace(/\r$/, '');
   const nLines = lineStart.length;
   const opener = new Array(nLines).fill(null);
   const nextClose = { '```': new Int32Array(nLines + 1).fill(-1), '~~~': new Int32Array(nLines + 1).fill(-1) };

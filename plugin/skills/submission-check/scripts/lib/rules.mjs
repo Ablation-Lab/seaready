@@ -127,9 +127,9 @@ export const SIDE_EFFECTS = [
     readme: /settings(\.local)?\.json|~\/\.claude|\.claude[\\/]/i },
   { id: 'home-files', label: 'files outside the project (home, AppData, user folders)',
     // A "~" counts as the home folder only where a path starts: not after a letter, digit, another
-    // "~", ], ), }, $ or a backslash (regex text such as {1,6}~\d or ~~/ isn't a path), and not when the
-    // backslash after it starts a regex escape like \d or \s.
-    code: /%APPDATA%|%LOCALAPPDATA%|%USERPROFILE%|\$env:(APPDATA|LOCALAPPDATA|USERPROFILE)|GetFolderPath\s*\(|\bos\.homedir\s*\(|\bhomedir\s*\(|\bexpanduser\s*\(|Path\.home\s*\(|(?<![\w~\])}$\\])~(?:\/|\\(?![dDsSwWbBnrtfv0]))|\$HOME\b|\$env:HOME\b|SpecialFolder\]?::/i,
+    // "~", ], ), }, $ or a backslash (regex text such as {1,6}~\d or ~~/ isn't a path). Any "~/" or "~\"
+    // there counts, PowerShell's ~\Documents included (failing closed: no exceptions for what follows).
+    code: /%APPDATA%|%LOCALAPPDATA%|%USERPROFILE%|\$env:(APPDATA|LOCALAPPDATA|USERPROFILE)|GetFolderPath\s*\(|\bos\.homedir\s*\(|\bhomedir\s*\(|\bexpanduser\s*\(|Path\.home\s*\(|(?<![\w~\])}$\\])~[\\/]|\$HOME\b|\$env:HOME\b|SpecialFolder\]?::/i,
     readme: /%APPDATA%|%LOCALAPPDATA%|AppData|home (folder|directory)|~[\\/]|\$HOME|user profile/i },
   { id: 'temp', label: 'temporary files',
     code: /\btmpdir\s*\(|%TEMP%|\$env:TE?MP\b|GetTempPath|mkdtemp|tempfile\.|\/tmp\/|New-TemporaryFile/i,
