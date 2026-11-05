@@ -134,7 +134,24 @@ A ship is checked before it is cleared to sail; Seaready does the same for a plu
 
 ## Limits
 
-- It finds evidence with patterns, so it can miss things written in unusual ways and can flag harmless code. The judgement step catches some of both; the report says where to look.
+**What it's for.** Seaready is for checking your own plugin before you submit it: it catches the honest mistakes that hold or block a submission. It is not a security scanner for code written to fool it. A plugin author who sets out to hide behaviour from a pattern-based check can do it.
+
+**Checking a repo you don't trust.** Check it from a fresh clone (so the author's own `.git` folder and config never come with it), pass `--no-repo-terms` and `--out` with a folder in your temp folder, and read the code yourself. In our tests, nothing in a checked repo could run code, inject text into the report or leak your private data or email addresses; the known limits below are about misleading the checks and slowing them down.
+
+**Known limits** (from six independent rechecks on 2026-11-05):
+- It finds evidence with patterns, so it can miss things written in unusual ways and can flag harmless code. The judgement step catches some of both; the report says where to look. Known misses include:
+  - denials it doesn't recognise as denials, such as "zilch", "refrains from" or unusual symbols;
+  - text GitHub doesn't show but the check still reads, such as a link-reference title on its own line;
+  - launchers with unusual options (`npm --loglevel silent exec`), inside commands over 8 KB, or named by a full Windows path (`C:\nodejs\npx.cmd`);
+  - scripts reached indirectly (sourced by another script, or run after a `cd`);
+  - home-folder writes far from where the path is set, or through tools like `rsync`, `dd` or `tar -C`.
+- A repo built to be slow can make the check very slow:
+  - a README with thousands of code fences and HTML comments;
+  - very long blank runs inside front-matter hooks;
+  - a private-term pattern from the repo's own list that is slow on many small files. Each pattern has a 1.5 s limit per batch, and a pattern that runs out of time stops the run, but there is no limit on the total time.
+
+  Stop it and use the fresh-clone advice above.
+- Very long lines made of word characters can make an ordinary private-term pattern run out of time, which stops the run. Simplify the pattern, or remove the long lines from what you check.
 - The directory copy is only as fresh as Claude Code's cache. Open the plugin directory in Claude Code to refresh it.
 - Rules change. The rules were read on 2026-11-05; `skills/submission-check/reference/policy.md` links the live pages.
 
