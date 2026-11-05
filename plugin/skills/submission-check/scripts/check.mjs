@@ -375,7 +375,6 @@ function runWith(opts, repoRoot, commit, mirror) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  G.removeTempOnSignals();
   const opts = parseArgs(process.argv.slice(2));
   let res;
   try { res = run(opts); }

@@ -38,13 +38,9 @@ export function removeTemp() {
   safeCwd = null;
 }
 process.on('exit', removeTemp);
-// Ctrl+C and termination signals: remove the folders, then exit as the signal would. (A process killed
-// outright, as Task Manager or a closed console does, runs no handler at all.)
-export function removeTempOnSignals() {
-  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129], ['SIGBREAK', 149]]) {
-    try { process.on(sig, () => { removeTemp(); process.exit(code); }); } catch { /* signal not supported here */ }
-  }
-}
+// No signal handlers on purpose: a listener for SIGINT or SIGTERM replaces Node's default exit, and a
+// synchronous run never gives it a turn, so Ctrl+C would be ignored until the run ended. A run stopped
+// with Ctrl+C can leave its folders behind (see the README's Limits).
 // An empty folder to run child processes in.
 export function emptyCwd() {
   if (!safeCwd || !fs.existsSync(safeCwd)) { safeCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'seaready-cwd-')); liveTemp.add(safeCwd); }

@@ -103,16 +103,9 @@ test('run() itself removes its temporary folders, before the process exits', () 
   assert.deepEqual(JSON.parse(r.stdout.trim().split('\n').pop()), []);
 });
 
-test('Ctrl+C: the signal handler removes the temporary folders before exiting', () => {
-  const t = tmpDir('seaready-tempdir-');
-  const probe = tmpDir('seaready-probe-');
-  const gitUrl = pathToFileURL(path.join(scripts, 'lib', 'git.mjs')).href;
-  write(probe, 'p.mjs', `import * as G from ${JSON.stringify(gitUrl)};\nG.removeTempOnSignals();\nconsole.log(G.emptyCwd());\nprocess.emit('SIGINT', 'SIGINT');\nsetTimeout(() => process.exit(5), 2000);\n`);
-  const r = spawnSync(process.execPath, [path.join(probe, 'p.mjs')], { env: envFor(t), encoding: 'utf8', timeout: 60000 });
-  assert.equal(r.status, 130, r.stderr);
-  assert.ok(r.stdout.trim().startsWith(t) || r.stdout.includes('seaready-cwd-'), r.stdout);
-  assert.deepEqual(leftovers(t), []);
-});
+// (The Ctrl+C handler test that was here called the handler with process.emit, not a real signal, and
+// so missed that the handlers stopped Ctrl+C from working. The handlers are gone; test/interrupt.test.mjs
+// sends a real interrupt instead.)
 
 test('the test suite cleans up: a test file leaves nothing in the temp folder', () => {
   const t = tmpDir('seaready-tempdir-');
