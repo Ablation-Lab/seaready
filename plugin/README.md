@@ -19,7 +19,7 @@ In Claude Code 2.1.275 or later:
 /plugin install seaready --marketplace Ablation-Lab/seaready
 ```
 
-On older versions, add the marketplace first with `/plugin marketplace add Ablation-Lab/seaready`, then `/plugin install seaready@seaready`. To use the skill without the plugin, copy the `skills/submission-check` folder into `~/.claude/skills/`; it then runs as `/submission-check`. It needs Node.js 18 or later and git.
+On older versions, add the marketplace first with `/plugin marketplace add Ablation-Lab/seaready`, then `/plugin install seaready@seaready`. To use the skill without the plugin, copy the `skills/submission-check` folder into `~/.claude/skills/`; it then runs as `/submission-check`. It needs Node.js 18 or later and git 2.44 or later.
 
 ## What it checks
 
@@ -81,7 +81,7 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
   - On every run, Claude searches for name clashes and similar plugins: `gh search repos` and `gh search code` if the GitHub CLI is installed, and its own web search (GitHub, claude.com for the plugin directory, community skill directories). The queries are the plugin and skill names and a few words for what the plugin does.
 - **What it reads:**
   - the repository you point it at: committed files and history through git, the working-tree files (to see what's uncommitted), your git config values for line endings, `.git/info/attributes`, and `.plugin-check-allow.json` if the repo has one;
-  - `.privacy/patterns.txt` in that repo if there is one, or a list you pass with `--private-terms`;
+  - `.privacy/patterns.txt` in that repo if there is one (skip it with `--no-repo-terms` for a repo that isn't yours: its author chose those patterns), or a list you pass with `--private-terms`;
   - two caches Claude Code keeps, read only, for the name check: `~/.claude/plugins/plugin-directory-cache-v2.json` (the directory's listings) and `~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` (marketplaces you've added). `--config-dir <folder>` points it at another Claude config folder.
 - **What it writes:** `report.md`, `report.json` and `submission-sheet.md` in `<repo>/.plugin-check/`, which gets its own `.gitignore` so it's never committed (or in the folder you pass with `--out`). It refuses to write there if that folder is committed or is a link. In your temp folder it makes the empty git folder, an empty working folder and, for `claude plugin validate`, a copy of the plugin folder; the first and last are deleted when the run ends. The sample script writes one new folder under your temp folder (or one you name) and runs git inside it.
 - **What it changes:** nothing else. Neither the script nor Claude edits, commits or pushes the repo it checks; suggested fixes and "How it compares" text go in the report for you to apply. It doesn't submit anything or change Claude Code's settings.
@@ -89,7 +89,7 @@ The check ends with **NOT READY** and lists, among others: a reserved plugin nam
 
 ## Where it works
 
-- **Claude Code** on Windows, macOS or Linux, with Node.js 18 or later and git on the PATH. It was built and tested on Windows 11 with Node 26 and Git for Windows.
+- **Claude Code** on Windows, macOS or Linux, with Node.js 18 or later and git 2.44 or later on the PATH. Older git is refused, because it lacks the option that stops a partial clone fetching objects (and so running a program its config names); macOS, Ubuntu 24.04 and Debian 12 ship older git, so install a newer one (for example from git-scm.com or Homebrew). It was built and tested on Windows 11 with Node 26 and Git for Windows.
 - **Cowork:** the skill loads, but it needs a local git repository and Node, so it only works when the Cowork session runs on your computer.
 - **Claude chat (claude.ai):** the skill loads but can't run, because it checks a git repository on your computer.
 

@@ -27,7 +27,7 @@ const stripBom = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
 
 function usage(msg) {
   if (msg) console.error(`check: ${msg}`);
-  console.error('usage: node check.mjs <repo> [--plugin-path <dir>] [--ref <commit>] [--out <dir>] [--worktree] [--private-terms <file>] [--config-dir <dir>] [--no-validate] [--quiet]');
+  console.error('usage: node check.mjs <repo> [--plugin-path <dir>] [--ref <commit>] [--out <dir>] [--worktree] [--private-terms <file>] [--config-dir <dir>] [--no-validate] [--no-repo-terms] [--quiet]');
   process.exit(2);
 }
 
@@ -44,6 +44,7 @@ export function parseArgs(argv) {
     else if (a === '--config-dir') o.configDir = val();
     else if (a === '--no-validate') o.validate = false;
     else if (a === '--quiet') o.quiet = true;
+    else if (a === '--no-repo-terms') o.noRepoTerms = true;
     else if (a === '-h' || a === '--help') usage();
     else if (a.startsWith('--')) usage(`unknown option ${a}`);
     else if (!o.repo) o.repo = a;
@@ -65,6 +66,12 @@ function loadPrivateTerms(file, strict, F) {
     const t = l.trim();
     if (!t || t.startsWith('#')) return;
     const src = t.replace(/\[\[:space:\]\]/g, '\\s').replace(/\[\[:alnum:\]\]/g, '[A-Za-z0-9]').replace(/\[\[:alpha:\]\]/g, '[A-Za-z]').replace(/\[\[:digit:\]\]/g, '[0-9]');
+    // A quantified group that itself contains a quantifier or an alternation, such as (a+)+ or
+    // (a|a)+, can take exponential time on some lines. Such patterns are skipped, not run.
+    if (/\((?:[^()\\]|\\.)*(?:[+*}]|\|)(?:[^()\\]|\\.)*\)\s*[+*{]/.test(src)) {
+      F.add('WARN', 'PRIVATE-TERMS', `Pattern on line ${i + 1} of the private-terms list could be very slow, so it was skipped`, { detail: 'A repeated group containing a repeat or an alternation (like (a+)+ or (a|b)+). Rewrite it without the nesting.' });
+      return;
+    }
     try { terms.push({ re: new RegExp(src, 'i'), n: i + 1, source: `line ${i + 1}`, file: path.basename(file) }); }
     catch (e) {
       if (strict) throw new Error(`private terms ${file} line ${i + 1} is not a valid pattern: ${e.message}`);
@@ -290,10 +297,13 @@ function runWith(opts, repoRoot, commit, mirror) {
   let addedLines = G.historyAddedLines(mirror, commit);
   if (addedLines == null) { F.add('WARN', 'HISTORY-SKIPPED', 'Couldn\'t read the full history, so earlier commits weren\'t checked for emails and private terms', { detail: 'The history is too large to read in one go. Check it with your own tools before the repo goes public.' }); addedLines = []; }
   const strictTerms = !!opts.privateTerms;
-  const termsFile = opts.privateTerms || path.join(repoRoot, '.privacy', 'patterns.txt');
+  // The repo's own .privacy/patterns.txt is used unless --no-repo-terms: right for your own repos,
+  // but in a repo you don't trust its author chose the patterns (and so what gets redacted).
+  const termsFile = opts.privateTerms || (opts.noRepoTerms ? null : path.join(repoRoot, '.privacy', 'patterns.txt'));
   const privateTerms = loadPrivateTerms(termsFile, strictTerms, F);
-  if (privateTerms.length) notes.push(`Private terms: ${privateTerms.length} pattern(s) from ${strictTerms ? path.basename(termsFile) : '.privacy/patterns.txt'} (matches are never printed).`);
+  if (privateTerms.length) notes.push(`Private terms: ${privateTerms.length} pattern(s) from ${strictTerms ? path.basename(termsFile) : 'the repo\'s own .privacy/patterns.txt'} (matches are replaced with «private term N»).${strictTerms ? '' : ' If you don\'t trust this repo, re-run with --no-repo-terms: its author chose these patterns, so they decide what gets redacted.'}`);
   else notes.push('No private-terms list (.privacy/patterns.txt or --private-terms), so names and other private words were not checked. Add one to catch your real name or project codenames.');
+  if (branch) for (const t of privateTerms) if (t.re.test(branch)) F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in the branch name`, { detail: `${t.source} (${t.file}); branch names are pushed with the repo.`, fix: 'Rename the branch before pushing.' });
   const listings = loadListings(opts.configDir);
   const allow = readAllow(files, F);
   const ctx = {
@@ -333,6 +343,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   const skillBodies = components.skills.map(s => s.fm?.body || '').join('\n');
   const facts = redactDeep({ ...mf, manifest, readme: readme ? { ...readme, text: undefined } : null, components: { ...components, skills: components.skills.map(s => ({ ...s, fm: undefined, scriptsHint: /\$\{CLAUDE_SKILL_DIR\}|\bnode\b|\bpowershell\b|\bpython3?\b|\bbash\b|\.ps1\b|\.sh\b/.test(s.fm?.body || '') })) },
     code, chat: live.filter(f => f.id === 'CHAT-HISTORY' && (f.sev === 'FAIL' || f.sev === 'WARN')),
+    allowedBehaviour: findings.filter(f => f.sev === 'ALLOWED' && /^(DISCLOSE|DISCLOSE-HOST|CHAT-HISTORY)$/.test(f.id)).length,
     webTools: /\bWeb(Fetch|Search)\b|web (fetch|search)|search (GitHub|the web)/i.test(skillBodies), licenseFile: [...files.keys()].some(p => /(^|\/)LICEN[SC]E/i.test(p)) }, redact);
   const c = counts(findings);
   const meta = { repoRoot, repoName: path.basename(repoRoot), commit, ref: opts.ref, worktree: opts.worktree, pluginDir, pluginName: redact(manifest?.displayName || manifest?.name),

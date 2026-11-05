@@ -14,9 +14,10 @@ export function counts(list) {
 }
 
 export function verdict(c) {
-  if (c.FAIL) return 'NOT READY: fix every FAIL before you validate in the portal.';
-  if (c.WARN) return 'READY TO VALIDATE, with warnings: read each WARN; several are what the portal holds for a reviewer.';
-  return 'READY TO VALIDATE: nothing failed or needs a look.';
+  const allowed = c.ALLOWED ? ` ${c.ALLOWED} finding(s) were ALLOWED by the repo's own .plugin-check-allow.json; read them before you trust this verdict.` : '';
+  if (c.FAIL) return 'NOT READY: fix every FAIL before you validate in the portal.' + allowed;
+  if (c.WARN) return 'READY TO VALIDATE, with warnings: read each WARN; several are what the portal holds for a reviewer.' + allowed;
+  return 'READY TO VALIDATE: nothing failed or needs a look.' + allowed;
 }
 
 export function renderReport(meta, list, judgement) {
@@ -105,6 +106,7 @@ export function renderSheet(meta, facts) {
   out.push('');
 
   out.push('## 3. Data handling (suggested answers)', '');
+  if (facts.allowedBehaviour) out.push(`> **Check first:** ${facts.allowedBehaviour} finding(s) about what the plugin reads, writes or sends were ALLOWED because the repo's own allow file marks their files as pattern data. These answers leave them out. If any of them is real behaviour, these answers are wrong.`, '');
   const reads = [];
   if (eff('home-files')) reads.push(eff('home-files').writes ? 'and writes files outside the project (home or app-data folders)' : 'files outside the project (home or app-data folders)');
   if (facts.chat?.length) reads.push('Claude Code session data (see the 1G finding)');

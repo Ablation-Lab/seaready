@@ -36,9 +36,30 @@ export function emptyCwd() {
   return safeCwd;
 }
 
+// Git 2.44 or later is required: --no-lazy-fetch (and GIT_NO_LAZY_FETCH) only exist from 2.44,
+// and without them a partial clone's promisor remote can start a program named in the repo's
+// config. Older git refuses the option outright, so it fails safe rather than running anything.
+export const MIN_GIT = [2, 44];
+export function parseGitVersion(text) {
+  const m = String(text).match(/git version (\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+let versionChecked = false;
+export function checkGitVersion() {
+  if (versionChecked) return;
+  let out;
+  try { out = execFileSync('git', ['--version'], { encoding: 'utf8', cwd: emptyCwd(), windowsHide: true }); }
+  catch (e) { throw new GitError(`git was not found (${e.code || e.message}); install git ${MIN_GIT.join('.')} or later`); }
+  const v = parseGitVersion(out);
+  if (!v || v[0] < MIN_GIT[0] || (v[0] === MIN_GIT[0] && v[1] < MIN_GIT[1]))
+    throw new GitError(`${out.trim()} is too old: Seaready needs git ${MIN_GIT.join('.')} or later to read a repo without letting its config start programs`);
+  versionChecked = true;
+}
+
 function run(args, { encoding = 'utf8', allowFail = false, input, env } = {}) {
+  checkGitVersion();
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', ['--no-lazy-fetch', ...args], {
       encoding: encoding === 'buffer' ? undefined : 'utf8',
       maxBuffer: 1024 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],

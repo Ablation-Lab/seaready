@@ -112,7 +112,7 @@ export const INJECTION = [
 export const SIDE_EFFECTS = [
   { id: 'network', label: 'network requests',
     code: /\bfetch\s*\(|\bhttps?\.(get|request)\s*\(|XMLHttpRequest|new WebSocket\(|Invoke-WebRequest|Invoke-RestMethod|\b(iwr|irm)\s|Net\.WebClient|\bHttpClient\b|\bcurl(\.exe)?\s|\bwget\s|\brequests\.(get|post|put|delete|request)\(|\burllib\.request|\baxios\b|\bWebRequest\]::/i,
-    readme: /network|internet|\bfetch(es|ed)?\b|download|\b(sends?|uploads?|posts?)\b[^.]{0,60}\b(to|server|service|api|url|endpoint|host|site)\b|\brequests? (to|from)\b|connects? to|web search|https?:\/\/|online/i },
+    readme: /network|internet|\bfetch(es|ed)?\b|download|\b(sends?|uploads?|posts?)\b[^.]{0,60}\b(to|server|service|api|url|endpoint|host|site)\b|\brequests? (to|from)\b|connects? to|web search/i },
   { id: 'registry', label: 'Windows registry changes',
     code: /HKCU:|HKLM:|HKEY_(CURRENT_USER|LOCAL_MACHINE)|\breg(\.exe)?\s+(add|delete|import)\b|Registry(Key)?\]?::|Microsoft\.Win32\.Registry|\b(New|Set|Remove)-ItemProperty\b|\bwinreg\b|CurrentVersion\\\\?Run/i,
     readme: /registry|HKCU|HKEY|Run key|\bRun\b value/i },

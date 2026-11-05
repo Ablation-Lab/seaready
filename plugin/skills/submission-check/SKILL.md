@@ -2,7 +2,7 @@
 name: submission-check
 description: Checks a Claude Code plugin repository before it goes to Anthropic's plugin directory, and drafts answers for the portal's submission form. A local script, which makes no network requests, reports pass, warn and fail on names (against the directory listings it can see offline), trigger wording, README versus code, chat-history reads, sample data and example prompts, hidden Unicode, line endings in a real git archive, shell-injection risks, personal emails in files and history, and plugin.json's listing links. Claude then always searches GitHub, the plugin directory and the web for name clashes and similar plugins, and reports them with suggested How it compares text. It never edits the repo it checks. Use when the user asks to check, audit or pre-flight a plugin repo before submitting it to the plugin directory, asks whether it will pass the portal's validation, or asks for suggested answers for the directory's submission form.
 license: MIT
-compatibility: Claude Code with Node.js 18 or later and git, on Windows, macOS or Linux. It checks a local git repository, so it can't run in claude.ai chat. The script works offline; the name search uses Claude's web search and, if installed, the GitHub CLI.
+compatibility: Claude Code with Node.js 18 or later and git 2.44 or later, on Windows, macOS or Linux. It checks a local git repository, so it can't run in claude.ai chat. The script works offline; the name search uses Claude's web search and, if installed, the GitHub CLI.
 ---
 
 <!-- Maintainers: plugin/README.md describes this skill. When you change what it does, update the README too. -->
@@ -37,8 +37,9 @@ Options, only when needed:
 - `--private-terms <file>`: a list of private words to look for (one regular expression per line). By default it uses `.privacy/patterns.txt` in the repo if there is one.
 - `--out <folder>`: where to write the results. The default is `<repo>/.plugin-check/`, which gets its own `.gitignore` so it is never committed. Use `--out` with a folder in your temp folder when checking a repo you don't trust.
 - `--no-validate`: skip `claude plugin validate`.
+- `--no-repo-terms`: don't use the checked repo's own `.privacy/patterns.txt`. Use it, with `--out` in your temp folder, whenever the repo isn't the user's own: that file's author chooses what gets redacted.
 
-Exit code 0 means no FAIL, 1 means at least one FAIL, 2 means the check couldn't run (read the message; usually not a git repo, no commits, or Node is too old). If `node` isn't found, tell the user it needs Node.js 18 or later and stop.
+Exit code 0 means no FAIL, 1 means at least one FAIL, 2 means the check couldn't run (read the message; usually not a git repo, no commits, Node is too old, or git is older than 2.44, which it needs to read a repo safely). If the verdict says findings were ALLOWED by the repo's own allow file, read each one before you trust the verdict. If `node` isn't found, tell the user it needs Node.js 18 or later and stop.
 
 It prints a verdict and writes `report.md`, `report.json` and `submission-sheet.md`.
 
