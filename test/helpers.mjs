@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 
 export const NOREPLY = '1000002+test-dev@users.noreply.github.com';
 
-export function tmpDir(prefix = 'checkrider-test-') {
+export function tmpDir(prefix = 'seaready-test-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -32,7 +32,7 @@ export function repo(files, { email } = {}) {
 
 // An empty Claude config dir, or one holding a small fake directory cache.
 export function configDir(listings = []) {
-  const dir = tmpDir('checkrider-cfg-');
+  const dir = tmpDir('seaready-cfg-');
   if (listings.length) {
     const cache = { schemaVersion: 2, fetchedAt: '2026-11-01T00:00:00.000Z', listings: [], entryNames: {}, entryNameClaims: {} };
     listings.forEach((l, i) => {

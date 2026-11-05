@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checkrider submission check: checks a plugin repo before it goes to Anthropic's plugin directory.
+// Seaready submission check: checks a plugin repo before it goes to Anthropic's plugin directory.
 //
 //   node check.mjs <repo> [--plugin-path <dir>] [--ref <commit>] [--out <dir>] [--worktree]
 //                  [--private-terms <file>] [--config-dir <dir>] [--no-validate] [--quiet]
@@ -102,7 +102,7 @@ function findClaude() {
 function claudeValidate(files, pluginDir, F) {
   const exe = findClaude();
   if (!exe) { F.add('INFO', 'CLAUDE-VALIDATE', 'claude CLI not found; skipped `claude plugin validate`'); return; }
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'checkrider-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'seaready-'));
   try {
     const base = pluginDir ? pluginDir + '/' : '';
     const target = path.join(tmp, 'plugin');

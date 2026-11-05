@@ -7,7 +7,7 @@ compatibility: Claude Code with Node.js 18 or later and git, on Windows, macOS o
 
 <!-- Maintainers: plugin/README.md describes this skill. When you change what it does, update the README too. -->
 
-# Submission check (Checkrider)
+# Submission check (Seaready)
 
 Check a plugin repo against the plugin directory's rules before the user submits it, then fill in their submission sheet. The script does the mechanical checks; you do the ones that need reading.
 
