@@ -49,12 +49,13 @@ test('MED: a Privacy line that names no contacted host doesn\'t disclose network
   assert.ok(!netFail(check(repo(files))), 'naming the host and what is sent discloses it');
 });
 
-test('LOW-MED: slow private-term patterns are skipped, whatever their shape', () => {
-  const root = repo({ ...cleanPlugin(), '.privacy/patterns.txt': '((a)+)+$\n.*.*.*.*.*.*!\nquietword\n', 'docs/a.txt': 'a'.repeat(34) + '\n' + 'x'.repeat(3000) + '\n' });
+test('LOW-MED: slow private-term patterns are stopped by the time limit, whatever their shape', () => {
+  // A failing tail character is what makes these backtrack: 34 a's then "!", 3000 x's with no "!".
+  const root = repo({ ...cleanPlugin(), '.privacy/patterns.txt': '((a)+)+$\n.*.*.*.*.*.*!\nquietword\n', 'docs/a.txt': 'a'.repeat(34) + '!\n' + 'x'.repeat(3000) + '\n' });
   const t0 = Date.now();
   const res = check(root);
   assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
-  assert.equal(res.findings.filter(f => f.id === 'PRIVATE-TERMS' && /very slow/.test(f.title)).length, 2);
+  assert.equal(res.findings.filter(f => f.id === 'PRIVATE-TERMS' && /ran out of time/.test(f.title)).length, 2);
 });
 
 test('LOW-MED: home-folder writes further away or with other calls are counted', () => {

@@ -6,6 +6,7 @@ import * as R from './rules.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { scanUnicode, mixedScriptWords, lineColAt, decodeTagRun } from './unicode.mjs';
 import { findClashes, findOverlaps } from './directory.mjs';
+import * as T from './terms.mjs';
 
 export function createFindings() {
   const list = [];
@@ -410,7 +411,9 @@ export function checkComponents(ctx, F) {
   const asList = v => (v == null ? [] : Array.isArray(v) ? v : [v]);
   const addHooks = r => { if (r) out.hooks = { events: [...(out.hooks?.events || []), ...r.events], commands: [...(out.hooks?.commands || []), ...r.commands] }; };
   const addMcp = r => { if (r) out.mcp = [...(out.mcp || []), ...r]; };
+  for (const s of [...out.skills, ...out.commands, ...out.agents]) if (s.hooks) addHooks(s.hooks);
   for (const h of asList(m.hooks)) {
+    if (typeof h === 'string' && /^(\.\.[\\/]|[\\/]|[A-Za-z]:)/.test(h)) continue;   // outside the plugin: MANIFEST-PATH reports it
     if (typeof h === 'string') {
       const hp = joinPath(pluginDir, h);
       if (hp === hooksPath || (base && !hp.startsWith(base))) continue;   // outside the plugin: MANIFEST-PATH reports it
@@ -464,6 +467,19 @@ function checkTriggerText(p, text, line, F, label) {
   }
 }
 
+// Hooks declared in front matter run while the skill (or agent) is active. A JSON-style value is
+// checked like hooks.json; nested YAML is scanned as text for commands, hosts and writes, and
+// flagged so Claude reads it in the judgement step.
+function frontmatterHooks(p, fm, F) {
+  if (!fm || !fm.keys.includes('hooks')) return {};
+  const raw = fm.raws?.hooks || '';
+  let obj = null;
+  if (/^\s*[{[]/.test(raw)) { try { obj = JSON.parse(raw.replace(/\s*\n\s*/g, ' ')); } catch { obj = null; } }
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { hooks: checkHooks(`${p} (front matter hooks)`, JSON.stringify(obj.hooks || obj.modules ? obj : { hooks: obj }), F, false) };
+  F.add('WARN', 'HOOKS', 'Hooks in front matter that this check can\'t fully read', { file: p, line: fm.lines.hooks, detail: 'Claude Code runs these while the skill is active. Their text was still scanned for commands, hosts and file writes; read them in the judgement step.' });
+  return { hooksRaw: raw };
+}
+
 export function checkSkill(p, text, F) {
   const folder = p.split('/').slice(-2, -1)[0];
   const info = { path: p, folder, name: null, description: null };
@@ -485,6 +501,7 @@ export function checkSkill(p, text, F) {
     checkTriggerText(p, combined, fm.lines.description, F, 'skill description');
     if (/\bofficial (plugin|skill|tool|integration|extension|anthropic|claude)\b|\b(made|built|published) by anthropic\b|\banthropic['’]s own (plugin|skill|tool)\b|\bendorsed by\b/i.test(desc)) F.add('WARN', 'SKILL-DESC', 'Description presents the skill as official', { file: p, detail: 'Names and descriptions must not present the plugin as official.' });
   }
+  Object.assign(info, frontmatterHooks(p, fm, F));
   const nonPortable = fm.keys.filter(k => !R.PORTABLE_SKILL_FIELDS.has(k));
   if (nonPortable.length) F.add('WARN', 'SKILL-FIELDS', `Front matter fields claude.ai skill uploads reject: ${nonPortable.join(', ')}`, { file: p, detail: 'Plugins accept Claude Code\'s extra fields, but uploads to claude.ai and the Skills API accept only name, description, license, compatibility, metadata, allowed-tools (Lore Lookup folded when_to_use into its description for this).' });
   if (typeof d.compatibility === 'string' && d.compatibility.length > 500) F.add('WARN', 'SKILL-FIELDS', 'compatibility is over 500 characters', { file: p });
@@ -505,6 +522,7 @@ function checkCommandOrAgent(p, text, F, kind) {
   const info = { path: p, name: p.split('/').pop().replace(/\.md$/i, ''), description: fm?.data?.description ?? null };
   if (!fm) { checkInstructionBody(p, text, 1, F); return info; }
   if (typeof info.description === 'string') checkTriggerText(p, info.description, fm.lines.description, F, `${kind} description`);
+  Object.assign(info, frontmatterHooks(p, fm, F));
   if (fm.data['allowed-tools'] != null) F.add('WARN', 'SKILL-PREAPPROVE', `${kind} pre-approves tools with allowed-tools`, { file: p, detail: String(fm.data['allowed-tools']).slice(0, 200) });
   if (fm.data['disable-model-invocation'] === true) F.add('INFO', 'SKILL-INVOCATION', `${kind} is hidden from Claude (disable-model-invocation)`, { file: p });
   checkInstructionBody(p, fm.body, fm.bodyStartLine, F);
@@ -530,9 +548,15 @@ function checkInstructionBody(p, body, startLine, F) {
 // pinned is held. Returns true if the command uses one.
 function launcherFinding(cmd, what, file, F) {
   // Spaces collapsed and .cmd/.exe dropped, so "npm  exec" and "npm.cmd exec" read as "npm exec".
-  const c = cmd.replace(/\s+/g, ' ').replace(/\b(npm|pnpm|yarn|npx|pnpx|bunx?|uvx?|pipx|deno)\.(cmd|exe)\b/gi, '$1');
-  if (!/(^|[\s/\\;&|(])(npx|pnpx|uvx|bunx)(\s|$)|\b(npm|pnpm|yarn) (exec|x|dlx)\b|\bbun x\b|\bpipx run\b|\buv (run|tool run)\b|\bdeno run\b.*\bnpm:/.test(c)) return false;
-  const pinned = /@\d+\.\d+\.\d+(\s|$)|==\d+\.\d+\.\d+|--locked|--frozen/.test(c);
+  // Also: any case (NPX), a version on the tool (yarn@1), and options before the subcommand
+  // (npm --yes exec, pnpm --silent dlx).
+  const c = cmd.replace(/\s+/g, ' ').replace(/\b(npm|pnpm|yarn|npx|pnpx|bunx?|uvx?|pipx|deno)(@\S+)?\.(cmd|exe)\b/gi, '$1');
+  const lc = c.toLowerCase().replace(/\b(npm|pnpm|yarn|bun)@\S+/g, '$1');
+  const OPTS = '(?: -{1,2}[\\w-]+(?:=\\S+)?)*';
+  const launcher = new RegExp(`(^|[\\s/\\\\;&|(])(npx|pnpx|uvx|bunx)(\\s|$)|\\b(npm|pnpm|yarn)${OPTS} (exec|x|dlx)\\b|\\bbun${OPTS} x\\b|\\bpipx${OPTS} run\\b|\\buv${OPTS} (run|tool run)\\b|\\bdeno${OPTS} run\\b.*\\b(npm|jsr|https?):`);
+  if (!launcher.test(lc)) return false;
+  // Pinned means the package itself has an exact version (an option like --tag=x@1.0.0 doesn't count).
+  const pinned = c.split(' ').some(t => !t.startsWith('-') && /[^@\s]@\d+\.\d+\.\d+$|==\d+\.\d+\.\d+$/.test(t)) || /\s--(locked|frozen)\b/.test(c);
   F.add(pinned ? 'WARN' : 'FAIL', 'LAUNCHER', pinned ? `${what} runs a pinned package from a registry` : `${what} runs an unpinned package`, { file, detail: c, portal: pinned ? 'Held for a reviewer ("Runs a pinned npx or uvx package")' : 'Blocks ("Unpinned npx/uvx launcher")', fix: pinned ? 'Bundle the package\'s code to avoid the hold.' : 'Pin an exact version (pkg@1.2.3, pkg==1.2.3) or use uv run --locked.' });
   return true;
 }
@@ -555,6 +579,8 @@ function checkHooks(p, text, F, subfolder) {
       for (const hk of g.hooks) {
         if (!isObj(hk)) { F.add('FAIL', 'HOOKS', `A hook in hooks.${ev} is not an object`, { file: p, portal: 'Blocks' }); continue; }
         if (hk.type === 'http' && !/^https:\/\//.test(typeof hk.url === 'string' ? hk.url : '')) F.add('FAIL', 'HOOKS', 'HTTP hook URL must be https://', { file: p, portal: 'Blocks' });
+        // An HTTP hook sends the hook's input to its URL: that's a network request on every event.
+        if (hk.type === 'http' && typeof hk.url === 'string' && hk.url) cmds.push({ event: ev, command: hk.url, file: p, remote: true, http: true });
         if (hk.type === 'command' || hk.command != null) {
           if (typeof hk.command !== 'string' || (hk.args != null && (!Array.isArray(hk.args) || hk.args.some(a => typeof a !== 'string')))) {
             F.add('FAIL', 'HOOKS', `A command hook in hooks.${ev} needs "command" as text (and "args" as a list of text)`, { file: p, portal: 'Blocks' }); continue;
@@ -570,7 +596,8 @@ function checkHooks(p, text, F, subfolder) {
       }
     }
   }
-  F.add('INFO', 'HOOKS', `Hooks: ${cmds.length} command hook(s)`, { file: p, detail: cmds.map(c => `${c.event}: ${c.command}`).join('\n') || 'none' });
+  const httpCount = cmds.filter(c => c.http).length;
+  F.add('INFO', 'HOOKS', `Hooks: ${cmds.length - httpCount} command hook(s)${httpCount ? `, ${httpCount} HTTP hook(s)` : ''}`, { file: p, detail: cmds.map(c => `${c.event}: ${c.http ? 'HTTP POST to ' : ''}${c.command}`).join('\n') || 'none' });
   return { events: Object.keys(h.hooks || {}), commands: cmds };
 }
 
@@ -718,9 +745,17 @@ export function checkCode(ctx, F, readme) {
   const chatHits = [];
   const isInstr = p => /(^|\/)(SKILL\.md|commands\/.+\.md|agents\/.+\.md)$/.test(p);
   const bundledImages = new Set([...files.keys()].filter(f => f.startsWith(base) && R.IMAGE_EXT.test(f)).map(f => f.split('/').pop().toLowerCase()));
+  // Files a hook, MCP or LSP command runs are code whatever their name: hooks/start, bin/tool.
+  const c0 = ctx.components || {};
+  const cmdTexts = [...(c0.hooks?.commands || []).map(c => c.command), ...[...(c0.mcp || []), ...(c0.lsp || [])].map(s => [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' '))];
+  const runFiles = new Set();
+  for (const t of cmdTexts) for (const m of String(t).matchAll(/\$\{?CLAUDE_PLUGIN_ROOT\}?[\\/]+([^\s"'`;|&)]+)|(?:^|\s)\.?[\\/]?((?:[\w.-]+[\\/])*[\w.-]+)(?=\s|$)/g)) {
+    const rel = (m[1] || m[2] || '').replace(/\\/g, '/').replace(/^\.\//, '');
+    if (rel && files.has(base + rel)) runFiles.add(base + rel);
+  }
   for (const [p, f] of files) {
     if (!p.startsWith(base) || !isText(f.data)) continue;
-    const isCode = R.CODE_EXT.test(p);
+    const isCode = R.CODE_EXT.test(p) || runFiles.has(p) || (f.data[0] === 0x23 && f.data[1] === 0x21);   // or starts with #!
     const instr = isInstr(p);
     const isTest = R.TEST_PATH.test(p);
     const text = f.data.toString('utf8');
@@ -794,7 +829,7 @@ export function checkCode(ctx, F, readme) {
       if (!codeText) return;
       for (const eff of R.SIDE_EFFECTS) if (eff.code.test(codeText)) {
         // A home-folder path usually goes into a variable and is written a line or two later.
-        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 7).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
+        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 11).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
         evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140), allowed: patternData, nearWrite });
       }
       for (const m of codeText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
@@ -808,7 +843,8 @@ export function checkCode(ctx, F, readme) {
   // Commands and URLs from hooks, MCP and LSP servers, from wherever they were declared.
   const comp = ctx.components || {};
   const cfg = [];
-  for (const c of comp.hooks?.commands || []) cfg.push({ file: c.file, text: c.command, what: `hook (${c.event})` });
+  for (const c of comp.hooks?.commands || []) cfg.push({ file: c.file, text: c.command, what: `${c.http ? 'HTTP hook' : 'hook'} (${c.event})`, remote: !!c.remote });
+  for (const list of [comp.skills, comp.agents]) for (const s of list || []) if (s.hooksRaw) cfg.push({ file: s.path, text: s.hooksRaw, what: 'hooks in front matter' });
   for (const list of [comp.mcp, comp.lsp]) for (const s of list || []) {
     if (typeof s.command === 'string') cfg.push({ file: s.file, text: [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' '), what: `${list === comp.lsp ? 'LSP' : 'MCP'} server ${s.name}` });
     if (typeof s.url === 'string' && s.url) cfg.push({ file: s.file, text: s.url, what: `MCP server ${s.name} (remote)`, remote: true });
@@ -934,7 +970,8 @@ export function checkCode(ctx, F, readme) {
 // "makes no network requests" and "never sends anything" don't disclose network use.
 // A denial after the match counts too: "Network: none", "| Network requests | None |".
 export function disclosed(re, text) {
-  const DENY = /\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor|n\/a|zero|disabled|unused)\b/i;
+  const DENY = /\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor|n\/a|zero|disabled|unused|offline|local[- ]only|isolated|nil|nope|absent)\b|❌|✗|✘|🚫/i;
+  const DENY_AFTER = /^[\w ]{0,25}?[\s:|()[\]\-–—]*(\b(none|no|nothing|never|n\/a|zero|0|disabled|off|not|unused|offline|local[- ]only|isolated|nil|nope|absent)\b|\bn\.a\.|❌|✗|✘|🚫)/i;
   return visibleText(text).split(/(?<=[.!?])\s+|\n/).some(raw => {
     // Formatting doesn't change the meaning. (A single ~ is kept: it's the home folder in ~/x.)
     const s = raw.replace(/[`*]|~~|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '');
@@ -942,9 +979,9 @@ export function disclosed(re, text) {
     if (!m) return false;
     if (DENY.test(s.slice(0, m.index))) return false;
     const after = s.slice(m.index + m[0].length, m.index + m[0].length + 40);
-    if (/^-?free\b/i.test(after)) return false;                                  // "network-free"
+    if (/^-?(free|isolated)\b/i.test(after)) return false;                       // "network-free", "network-isolated"
     if (/^[\w ]{0,25}?[\s:|()[\]]+[-–—]+\s*(\||[).\]]|$)/.test(after)) return false;   // a dash cell or "– none"
-    return !/^[\w ]{0,25}?[\s:|()[\]\-–—]*\b(none|no|nothing|never|n\/a|zero|0|disabled|off|not|unused)\b/i.test(after);
+    return !DENY_AFTER.test(after);
   });
 }
 
@@ -952,10 +989,17 @@ export function disclosed(re, text) {
 // no link reference definitions (including the [//]: # (comment) idiom), and link text without
 // its target. Line breaks are kept so line numbers still match.
 export function visibleText(md) {
-  return String(md || '')
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, m => m.replace(/[^\n]/g, ' '))
-    .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/gm, '')
-    .replace(/\]\([^)\n]*\)/g, ']');
+  const blank = m => m.replace(/[^\n]/g, ' ');           // keep line breaks, so line numbers still match
+  // Code fences are visible as written; everything else is cleaned of what a reader can't see.
+  return String(md || '').split(/(^ {0,3}(?:```|~~~)[^\n]*\n[\s\S]*?^ {0,3}(?:```|~~~)[ \t]*$)/m).map((part, k) => (k % 2 ? part : part
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, blank)                                       // comments, also one left open
+    .replace(/<(style|script|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, blank)
+    .replace(/<\?[\s\S]*?(?:\?>|$)/g, blank)
+    .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<[^>\n]*>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/gm, '')   // link reference definitions only
+    .replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, ' ')                                       // images: alt text isn't shown
+    .replace(/<img\b[^>]*>/gi, ' ')
+    .replace(/<\/?[A-Za-z][^>\n]*>/g, ' ')                                           // other tags: keep the text, drop attributes
+    .replace(/\]\([^)\n]*\)/g, ']'))).join('');                                     // links: text without the target
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1021,18 +1065,18 @@ export function checkPersonal(ctx, F) {
         ? text.split(/\n\s*\n/).map(par => par.replace(/<!--[\s\S]*?-->/g, '').replace(/[*_~`]/g, '').replace(/[ \t]*\r?\n[ \t]*/g, ' ')).filter(par => par.length <= 4096)
         : [];
       for (const t of privateTerms) {
-        const k = tl.findIndex(l => l.length <= 4096 && t.re.test(l));
+        const k = T.firstMatch(t, tl);
         if (k >= 0) { F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: k + 1, detail: `${t.source} (${t.file})`, fix: 'Remove it.' }); termFiles.add(`${t.n}|${p}`); continue; }
-        if (paras.some(par => t.re.test(par))) { F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n}), split by formatting or a line break`, { file: p, detail: `${t.source} (${t.file})`, fix: 'Remove it.' }); termFiles.add(`${t.n}|${p}`); }
+        if (T.firstMatch(t, paras) >= 0) { F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n}), split by formatting or a line break`, { file: p, detail: `${t.source} (${t.file})`, fix: 'Remove it.' }); termFiles.add(`${t.n}|${p}`); }
       }
     }
   }
   // File and folder names.
-  for (const e of ctx.tree || []) {
-    const name = e.path;
+  const names = (ctx.tree || []).map(e => e.path);
+  for (const name of names)
     for (const m of name.matchAll(R.EMAIL)) if (!R.SAFE_EMAIL.test(m[0])) F.add(R.PERSONAL_WEBMAIL.test(m[0].split('@')[1]) ? 'FAIL' : 'WARN', 'EMAIL-FILE', 'Email address in a file or folder name', { file: name, detail: maskEmail(m[0]) });
-    for (const t of privateTerms) if (t.re.test(name)) F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in a file or folder name`, { file: name, detail: `${t.source} (${t.file})`, fix: 'Rename it.' });
-  }
+  for (const t of privateTerms) for (const k of T.allMatches(t, names))
+    F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in a file or folder name`, { file: names[k], detail: `${t.source} (${t.file})`, fix: 'Rename it.' });
   // Commit messages (Signed-off-by lines, mentions) stay in history too.
   const msgSeen = new Set();
   for (const msg of ctx.messages || []) {
@@ -1043,10 +1087,11 @@ export function checkPersonal(ctx, F) {
       F.add('FAIL', 'EMAIL-HISTORY', 'Personal email in a commit message', { detail: `${maskEmail(e)} in ${msg.sha} (for example a Signed-off-by line)`, fix: 'Rewrite the message (git rebase, or filter-repo for published history).' });
       historyFail = true;
     }
-    for (const t of privateTerms) if (!msgSeen.has(`t${t.n}`) && msg.text.split('\n').some(l => l.length <= 4096 && t.re.test(l))) {
-      msgSeen.add(`t${t.n}`);
-      F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in a commit message`, { detail: `in ${msg.sha}`, fix: 'Rewrite the message before the repo goes public.' });
-    }
+  }
+  const msgs = ctx.messages || [];
+  for (const t of privateTerms) {
+    const k = T.firstMatch(t, msgs.map(m => m.text.replace(/\r?\n/g, ' ').slice(0, 4096)));
+    if (k >= 0) F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in a commit message`, { detail: `in ${msgs[k].sha}`, fix: 'Rewrite the message before the repo goes public.' });
   }
   for (const h of emailHits.values()) {
     const domain = h.email.split('@')[1];
@@ -1072,6 +1117,16 @@ export function checkPersonal(ctx, F) {
   else if (identities.length && !historyFail) F.add('PASS', 'EMAIL-HISTORY', 'Every commit author and committer uses a GitHub noreply address', { detail: `${identities.length} commits checked. Co-authors and commit messages are checked for personal webmail addresses only.` });
   // History content: personal emails and private terms that were removed later still ship on GitHub.
   const seen = new Set();
+  // Private terms in added lines: one timed batch per pattern.
+  const addedTexts = addedLines.map(l => l.text);
+  const termHits = new Map(privateTerms.map(t => [t, new Set(T.allMatches(t, addedTexts))]));
+  addedLines.forEach((l, idx) => {
+    for (const t of privateTerms) {
+      if (!termHits.get(t).has(idx)) continue;
+      const k = `t|${t.n}|${l.file}`; if (seen.has(k) || termFiles.has(`${t.n}|${l.file}`)) continue; seen.add(k);
+      F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in an earlier commit`, { file: l.file, detail: `added in ${l.sha}`, fix: 'Rewrite history to remove it.' });
+    }
+  });
   for (const l of addedLines) {
     for (const m of l.text.matchAll(R.EMAIL)) {
       const e = m[0];
@@ -1079,11 +1134,6 @@ export function checkPersonal(ctx, F) {
       const k = `e|${e}|${l.file}`; if (seen.has(k)) continue; seen.add(k);
       if ([...emailHits.values()].some(h => h.email === e && h.file === l.file)) continue;
       F.add('FAIL', 'EMAIL-HISTORY', 'Personal email in an earlier commit\'s content', { file: l.file, detail: `${maskEmail(e)} added in ${l.sha}; still in the repo's history even though the current files don't have it.`, fix: 'Rewrite history to remove it before the repo goes public.' });
-    }
-    for (const t of privateTerms) {
-      if (l.text.length > 4096 || !t.re.test(l.text)) continue;
-      const k = `t|${t.n}|${l.file}`; if (seen.has(k) || termFiles.has(`${t.n}|${l.file}`)) continue; seen.add(k);
-      F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in an earlier commit`, { file: l.file, detail: `added in ${l.sha}`, fix: 'Rewrite history to remove it.' });
     }
   }
 }

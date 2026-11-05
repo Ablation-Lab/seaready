@@ -6,22 +6,21 @@
 //     repo text goes in code blocks fenced longer than any backtick run inside it. So a plugin
 //     name or a line of its code can't add headings, sections or instructions to the report.
 import { EMAIL, SAFE_EMAIL } from './rules.mjs';
+import { redact as redactTerms } from './terms.mjs';
 
 const MAX_LINE = 4096;
 
 export const maskEmail = e => { const at = e.indexOf('@'); return `${e.slice(0, Math.min(2, at))}…${e.slice(at)}`; };
 
+// terms come from lib/terms.mjs prepare(); their matching runs under a time limit there.
+// Text that can't be redacted in time is withheld, never printed as it was.
 export function makeRedactor(terms = []) {
-  const globals = terms.map(t => ({ n: t.n, re: new RegExp(t.re.source, 'gi') }));
   return s => {
     if (typeof s !== 'string' || !s) return s;
-    let out = s.replace(EMAIL, e => (SAFE_EMAIL.test(e) ? e : maskEmail(e)));
-    if (globals.length) out = out.split('\n').map(l => {
-      if (l.length > MAX_LINE) return l.slice(0, 200) + ' …(long line not shown)';
-      for (const t of globals) l = l.replace(t.re, `«private term ${t.n}»`);
-      return l;
-    }).join('\n');
-    return out;
+    const out = s.replace(EMAIL, e => (SAFE_EMAIL.test(e) ? e : maskEmail(e)));
+    if (!terms.length) return out.split('\n').map(l => (l.length > MAX_LINE ? l.slice(0, 200) + ' …(long line not shown)' : l)).join('\n');
+    const r = redactTerms(terms, out);
+    return r == null ? '«text withheld: a private-term pattern ran out of time while redacting it»' : r;
   };
 }
 

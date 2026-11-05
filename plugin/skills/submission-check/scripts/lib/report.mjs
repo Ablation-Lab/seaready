@@ -142,7 +142,7 @@ export function renderSheet(meta, facts) {
   else out.push('_No sample data found. Add a samples/ folder (or a script that makes one) and a "For reviewers" section._');
   out.push('');
   out.push('## What it runs, sends and writes (from the code; must match the README)', '');
-  if (code.effects.length) for (const e of code.effects) out.push(`- ${e.label}: ${e.count} place(s), ${e.mentioned ? 'described in the README\'s what-it-runs or Privacy section' : '**not found in the README\'s what-it-runs or Privacy section**'} (e.g. ${mdInline(e.examples[0].file, 160)}:${e.examples[0].line})`);
+  if (code.effects.length) for (const e of code.effects) out.push(`- ${e.label}: ${e.count} place(s), ${e.mentioned ? 'described in the README\'s what-it-runs or Privacy section' : '**not found in the README\'s what-it-runs or Privacy section**'} (e.g. ${mdInline(e.examples[0].file, 160)}${e.examples[0].line ? ':' + e.examples[0].line : ''})`);
   else out.push('- No programs, writes or network requests found in the plugin\'s code.');
   if (hosts.length) out.push(`- Hosts named in code: ${mdInline(hosts.join(', '), 300)}`);
   out.push('');

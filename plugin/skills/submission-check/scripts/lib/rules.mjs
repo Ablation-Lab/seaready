@@ -112,7 +112,7 @@ export const INJECTION = [
 export const SIDE_EFFECTS = [
   { id: 'network', label: 'network requests',
     code: /\bfetch\s*\(|\bhttps?\.(get|request)\s*\(|XMLHttpRequest|new WebSocket\(|Invoke-WebRequest|Invoke-RestMethod|\b(iwr|irm)\s|Net\.WebClient|\bHttpClient\b|\bcurl(\.exe)?\s|\bwget\s|\brequests\.(get|post|put|delete|request)\(|\burllib\.request|\baxios\b|\bWebRequest\]::/i,
-    readme: /network|internet|\bfetch(es|ed)?\b|download|\b(sends?|uploads?|posts?)\b[^.]{0,60}\b(to|server|service|api|url|endpoint|host|site)\b|\brequests? (to|from)\b|connects? to|web search/i },
+    readme: /\bnetwork (requests?|access|calls?|traffic|connections?)\b|\binternet\b|\bfetch(es|ed|ing)?\b|\bdownloads\b|\b(sends?|uploads?|posts?)\b[^.]{0,60}\b(to|server|service|api|url|endpoint|host|site)\b|\brequests? (to|from)\b|\bconnects? to\b|\bweb search\b/i },
   { id: 'registry', label: 'Windows registry changes',
     code: /HKCU:|HKLM:|HKEY_(CURRENT_USER|LOCAL_MACHINE)|\breg(\.exe)?\s+(add|delete|import)\b|Registry(Key)?\]?::|Microsoft\.Win32\.Registry|\b(New|Set|Remove)-ItemProperty\b|\bwinreg\b|CurrentVersion\\\\?Run/i,
     readme: /registry|HKCU|HKEY|Run key|\bRun\b value/i },
@@ -175,7 +175,7 @@ export const PERSONAL_WEBMAIL = /^(gmail\.com|googlemail\.com|outlook\.com|hotma
 // Bounded parts, so a long run of letters with no @ can't make the scan slow.
 export const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/g;
 // Calls that write files (to tell a home-folder read from a write).
-export const WRITE_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|createWriteStream|mkdir(Sync)?|copyFile(Sync)?|cp(Sync)?|rename(Sync)?|writeSync|write_text|write_bytes|mkdirs?|makedirs|Set-Content|Out-File|Add-Content|New-Item|Copy-Item|Move-Item|File\.(Write|Copy|Move|Create|AppendAll)|Directory\.Create)\b|\bopen(Sync)?\(.*,\s*['"][wa+]/;
+export const WRITE_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|createWriteStream|mkdir(Sync)?|copyFile(Sync)?|cp(Sync)?|rename(Sync)?|writeSync|write_text|write_bytes|mkdirs?|makedirs|Set-Content|Out-File|Add-Content|New-Item|Copy-Item|Move-Item|File\]?::(Write|Append)All\w*|File\.(Write|Copy|Move|Create|AppendAll)\w*|Directory\.Create|shutil\.(copy\w*|move)|tee)\b|\bopen(Sync)?\(.*,\s*['"][wa+]|\.open\(\s*['"][wa+]|\bmode\s*=\s*['"][wa+]|>{1,2}\s*["']?(~|\$\{?HOME|\$env:|%USERPROFILE%|%APPDATA%)/;
 // Addresses that are fine to publish.
 export const SAFE_EMAIL = /@users\.noreply\.github\.com$|^noreply@anthropic\.com$|^noreply@github\.com$|@example\.(com|org|net|invalid|test)$|\.(invalid|test|example|localhost)$|@example$|@test$|@localhost$|@users\.noreply\.gitlab\.com$|^git@github\.com$/i;
 // Placeholder user names that are fine in docs.

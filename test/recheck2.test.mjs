@@ -64,7 +64,7 @@ test('4: a slow pattern in the repo\'s own list is skipped, and --no-repo-terms 
   const t0 = Date.now();
   const res = check(root);
   assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
-  assert.ok(res.findings.some(f => f.id === 'PRIVATE-TERMS' && /very slow/.test(f.title)));
+  assert.ok(res.findings.some(f => f.id === 'PRIVATE-TERMS' && /ran out of time/.test(f.title)));
   const off = check(root, { noRepoTerms: true });
   assert.ok(!off.findings.some(f => f.id === 'PRIVATE-TERMS'));
   assert.ok(off.meta.notes.some(n => /No private-terms list/.test(n)));

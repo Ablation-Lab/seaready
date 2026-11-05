@@ -53,7 +53,7 @@ function checkPlain(key, v, line, errors, notes) {
 export function parseFrontmatter(text) {
   const fm = splitFrontmatter(text);
   if (!fm) return null;
-  const data = {}, errors = [], notes = [], lines = {}, keys = [], flow = {};
+  const data = {}, errors = [], notes = [], lines = {}, keys = [], flow = {}, raws = {};
   const rows = fm.raw.split(/\r?\n/);
   let i = 0;
   while (i < rows.length) {
@@ -77,6 +77,7 @@ export function parseFrontmatter(text) {
     const cont = [];
     while (i < rows.length && (/^\s+\S/.test(rows[i]) || /^\s*$/.test(rows[i]))) { cont.push(rows[i]); i++; }
     while (cont.length && /^\s*$/.test(cont[cont.length - 1])) cont.pop();
+    raws[key] = [rest, ...cont].join('\n').trim();
     if (rest === '' && cont.length) {
       if (cont.every(c => /^\s*$/.test(c) || /^\s*-\s/.test(c) || /^\s*-$/.test(c))) {
         data[key] = cont.filter(c => /\S/.test(c)).map(c => c.replace(/^\s*-\s?/, '').trim());
@@ -85,8 +86,10 @@ export function parseFrontmatter(text) {
         for (const c of cont) { const mm = c.match(/^\s+([A-Za-z0-9_-]+)\s*:\s*(.*)$/); if (mm) obj[mm[1]] = mm[2].trim(); }
         data[key] = obj;
       } else {
-        errors.push({ line: lineNo, msg: `"${key}" has indented lines that are neither a list nor a map` });
-        data[key] = cont.join('\n').trim();
+        // Deeper YAML (lists of maps, maps of lists): this reader doesn't parse it, but it's valid
+        // YAML, so it isn't an error. The raw text is kept for the checks that need it (hooks).
+        notes.push({ line: lineNo, msg: `"${key}" holds nested YAML, which this check reads only as text` });
+        data[key] = { __yaml: cont.join('\n') };
       }
       continue;
     }
@@ -112,5 +115,5 @@ export function parseFrontmatter(text) {
     else if (r.flow === 'list') data[key] = value.replace(/^\[|\]$/g, '').split(',').map(s => s.trim()).filter(Boolean);
     else data[key] = value;
   }
-  return { data, errors, notes, keys, lines, flow, body: fm.body, bodyStartLine: fm.bodyStartLine };
+  return { data, errors, notes, keys, lines, flow, raws, body: fm.body, bodyStartLine: fm.bodyStartLine };
 }

@@ -21,6 +21,7 @@ import * as C from './lib/checks.mjs';
 import { loadListings } from './lib/directory.mjs';
 import { renderReport, renderSheet, counts, verdict } from './lib/report.mjs';
 import { makeRedactor, redactDeep, oneLine } from './lib/safety.mjs';
+import * as T from './lib/terms.mjs';
 
 const RULES_DATE = '2026-11-05';
 const stripBom = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
@@ -56,14 +57,6 @@ export function parseArgs(argv) {
   return o;
 }
 
-// True for patterns that run in roughly linear time on a line (see loadPrivateTerms).
-export function isSimplePattern(src) {
-  const bare = src.replace(/\\./g, 'x').replace(/\[(?:[^\]\\]|\\.)*\]/g, 'x');
-  if (/\)\s*(?:[*+]|\{\d*,?\d*\})/.test(bare)) return false;      // a repeated group
-  if (/\\[1-9]/.test(src)) return false;                          // a back-reference
-  return (bare.match(/[*+]|\{\d+,\}/g) || []).length <= 1;
-}
-
 // Private terms: one extended regex per line, # comments (the privacy-check format).
 // strict = the user passed the file: a broken pattern stops the run (fail loudly). Otherwise
 // (the checked repo's own .privacy/patterns.txt) a broken pattern is reported and skipped.
@@ -74,13 +67,8 @@ function loadPrivateTerms(file, strict, F) {
     const t = l.trim();
     if (!t || t.startsWith('#')) return;
     const src = t.replace(/\[\[:space:\]\]/g, '\\s').replace(/\[\[:alnum:\]\]/g, '[A-Za-z0-9]').replace(/\[\[:alpha:\]\]/g, '[A-Za-z]').replace(/\[\[:digit:\]\]/g, '[0-9]');
-    // Only patterns that can't take exponential or high-polynomial time are run: no repeated
-    // groups like (a+)+ or (a|b)+, no back-references, and at most one unbounded repeat (* + {n,})
-    // such as .*. Lines are also capped at 4096 characters where they're matched.
-    if (!isSimplePattern(src)) {
-      F.add('WARN', 'PRIVATE-TERMS', `Pattern on line ${i + 1} of the private-terms list could be very slow, so it was skipped`, { detail: 'Allowed: words, character classes, alternation, anchors and at most one * or + that is not on a group. Rewrite it more simply.' });
-      return;
-    }
+    // Every pattern is used; each match runs under a time limit (lib/terms.mjs), so a slow one is
+    // switched off and reported instead of stalling the run.
     try { terms.push({ re: new RegExp(src, 'i'), n: i + 1, source: `line ${i + 1}`, file: path.basename(file) }); }
     catch (e) {
       if (strict) throw new Error(`private terms ${file} line ${i + 1} is not a valid pattern: ${e.message}`);
@@ -88,7 +76,7 @@ function loadPrivateTerms(file, strict, F) {
     }
   });
   if (!terms.length && strict) throw new Error(`private terms file ${file} has no patterns`);
-  return terms;
+  return T.prepare(terms);
 }
 
 function remoteInfo(repo) {
@@ -312,7 +300,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   const privateTerms = loadPrivateTerms(termsFile, strictTerms, F);
   if (privateTerms.length) notes.push(`Private terms: ${privateTerms.length} pattern(s) from ${strictTerms ? path.basename(termsFile) : 'the repo\'s own .privacy/patterns.txt'} (matches are replaced with «private term N»).${strictTerms ? '' : ' If you don\'t trust this repo, re-run with --no-repo-terms: its author chose these patterns, so they decide what gets redacted.'}`);
   else notes.push('No private-terms list (.privacy/patterns.txt or --private-terms), so names and other private words were not checked. Add one to catch your real name or project codenames.');
-  if (branch) for (const t of privateTerms) if (t.re.test(branch)) F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in the branch name`, { detail: `${t.source} (${t.file}); branch names are pushed with the repo.`, fix: 'Rename the branch before pushing.' });
+  if (branch) for (const t of privateTerms) if (T.firstMatch(t, [branch]) >= 0) F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in the branch name`, { detail: `${t.source} (${t.file}); branch names are pushed with the repo.`, fix: 'Rename the branch before pushing.' });
   const listings = loadListings(opts.configDir);
   const allow = readAllow(files, F);
   const ctx = {
@@ -347,6 +335,9 @@ function runWith(opts, repoRoot, commit, mirror) {
   // Redact every string that came from the repo before anything is written or printed.
   const redact = makeRedactor(privateTerms);
   const findings = F.list.map(f => ({ ...f, title: redact(f.title), detail: redact(f.detail), file: redact(f.file), allowedReason: redact(f.allowedReason) }));
+  // Patterns that ran out of time, while checking or while redacting, are reported (by line number only).
+  for (const t of privateTerms) if (t.timedOut) findings.push({ sev: 'WARN', id: 'PRIVATE-TERMS', title: `Private-term pattern on line ${t.n} ran out of time, so it was switched off`,
+    detail: `Each batch of matches is limited to ${T.BUDGET_MS} ms. Text it would have matched wasn't checked for it, and text it couldn't redact in time was withheld. Rewrite the pattern more simply (for example without a repeated group like (a+)+).` });
   const manifest = mf.manifest && typeof mf.manifest === 'object' ? JSON.parse(JSON.stringify(mf.manifest)) : mf.manifest;
   if (manifest?.author && typeof manifest.author === 'object') delete manifest.author.email;
   const live = findings.filter(f => f.sev !== 'ALLOWED');
