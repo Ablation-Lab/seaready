@@ -72,7 +72,7 @@ test('4: a slow pattern in the repo\'s own list stops the run quickly (fails clo
 test('5: a home path with the write on the next line counts as a write', () => {
   const res = check(repo({ ...cleanPlugin(), 'skills/quiet-notes/scripts/w.mjs': "const dir = path.join(os.homedir(), '.demo-widget');\nfs.writeFileSync(path.join(dir, 'x.json'), '{}');\n" }));
   const sheet = fs.readFileSync(path.join(res.outDir, 'submission-sheet.md'), 'utf8');
-  assert.match(sheet.split('## 3. Data handling')[1], /writes files in its own folder/);
+  assert.match(sheet.split('## 3. Data handling')[1], /possibly files under the user.s home or app-data folder/);
 });
 
 test('new 1 leftovers: verdict and sheet say when the repo\'s allow file allowed behaviour; hosts are listed', () => {

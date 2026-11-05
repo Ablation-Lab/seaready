@@ -145,12 +145,9 @@ A ship is checked before it is cleared to sail; Seaready does the same for a plu
   - launchers with unusual options (`npm --loglevel silent exec`), inside commands over 8 KB, or named by a full Windows path (`C:\nodejs\npx.cmd`);
   - scripts reached indirectly (sourced by another script, or run after a `cd`);
   - home-folder writes far from where the path is set, or through tools like `rsync`, `dd` or `tar -C`.
-- A repo built to be slow can make the check very slow:
-  - a README with thousands of code fences and HTML comments;
-  - very long blank runs inside front-matter hooks;
-  - a private-term pattern from the repo's own list that is slow on many small files. Each pattern has a 1.5 s limit per batch, and a pattern that runs out of time stops the run, but there is no limit on the total time.
-
-  Stop it and use the fresh-clone advice above.
+- A repo built to be slow can still make the check slow with a private-term pattern from the repo's own list that is slow on many small files. Each pattern has a 1.5 s limit per batch, and a pattern that runs out of time stops the run, but there is no limit on the total time. Stop it and use the fresh-clone advice above. (READMEs with thousands of code fences and comments, and long blank runs in front-matter hooks, are now read in linear time.)
+- A `~` counts as a home-folder path only where a path can start (after a space, a quote, a bracket and the like), so `~/x` written straight after a letter or digit isn't recognised. Code that builds a home path some other way (`os.homedir()`, `$HOME`, `%APPDATA%`) is still found.
+- Chat-history words in a section that compares the plugin with other tools (How it compares, Alternatives, Similar tools, Related projects, See also) are reported as INFO, not FAIL, because they describe the other tools. A claim about the plugin itself written in such a section isn't caught there; the code is still checked.
 - Very long lines made of word characters can make an ordinary private-term pattern run out of time, which stops the run. Simplify the pattern, or remove the long lines from what you check.
 - The directory copy is only as fresh as Claude Code's cache. Open the plugin directory in Claude Code to refresh it.
 - Rules change. The rules were read on 2026-11-05; `skills/submission-check/reference/policy.md` links the live pages.

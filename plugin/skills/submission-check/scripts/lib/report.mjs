@@ -107,13 +107,17 @@ export function renderSheet(meta, facts) {
 
   out.push('## 3. Data handling (suggested answers)', '');
   if (facts.allowedBehaviour) out.push(`> **Check first:** ${facts.allowedBehaviour} finding(s) about what the plugin reads, writes or sends were ALLOWED because the repo's own allow file marks their files as pattern data. These answers leave them out. If any of them is real behaviour, these answers are wrong.`, '');
+  // A home-folder or app-data match is only a pattern match: the draft never states it as fact. It
+  // asks for the code to be checked, so a person or Claude confirms what is really read or written.
+  const home = eff('home-files');
   const reads = [];
-  if (eff('home-files')) reads.push(eff('home-files').writes ? 'and writes files outside the project (home or app-data folders)' : 'files outside the project (home or app-data folders)');
   if (facts.chat?.length) reads.push('Claude Code session data (see the 1G finding)');
-  out.push(`**Reads or stores personal data:** DRAFT — ${reads.length ? 'Yes, on the user\'s computer only' : 'No'}.`);
+  out.push(`**Reads or stores personal data:** DRAFT — ${reads.length ? 'Yes, on the user\'s computer only' : home ? 'CHECK THE CODE (see below)' : 'No'}.`);
+  if (home) out.push(`> **Check the code:** Seaready matched a home-folder or app-data pattern (${mdInline((home.examples || []).slice(0, 3).map(e => `${e.file}${e.line ? ':' + e.line : ''}`).join(', ') || 'see the DISCLOSE findings', 200)}). A pattern match isn't proof: read that code and say here whether the plugin really reads or writes files outside the project, and where.`, '');
   out.push(fence(reads.length
     ? `Only on the user's computer. It reads ${reads.join(' and ')} and writes ${writesSummary(eff)}. Nothing is collected or sent to the developer.`
-    : 'No. It works on the files the user points it at and keeps nothing about the user. Nothing is collected or sent to the developer.'));
+    : home ? `CHECK THE CODE: write what the plugin reads and writes once you have confirmed it. If the match is only a pattern (for example a regular expression), the answer is: No. It works on the files the user points it at and keeps nothing about the user. Nothing is collected or sent to the developer.`
+      : 'No. It works on the files the user points it at and keeps nothing about the user. Nothing is collected or sent to the developer.'));
   const net = eff('network'), hosts = code.hosts || [];
   const byClaude = facts.webTools;
   out.push(`**Sends data to services other than its declared connectors:** DRAFT — ${net || byClaude ? 'Yes (disclosing is the safer answer)' : 'No'}.`);
@@ -151,7 +155,7 @@ export function renderSheet(meta, facts) {
 
 function writesSummary(eff) {
   const w = [];
-  if (eff('home-files')?.writes) w.push('files in its own folder under the user\'s home or app-data directory');
+  if (eff('home-files')?.writes) w.push('CHECK THE CODE: possibly files under the user\'s home or app-data folder (a pattern matched; confirm it)');
   if (eff('temp')) w.push('temporary files');
   if (eff('registry')) w.push('a registry value');
   if (eff('shortcut')) w.push('a shortcut');

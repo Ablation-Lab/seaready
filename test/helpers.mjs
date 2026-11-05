@@ -6,8 +6,13 @@ import { execFileSync } from 'node:child_process';
 
 export const NOREPLY = '1000002+test-dev@users.noreply.github.com';
 
+// Every temp folder a test makes is removed when the test process ends.
+const made = [];
+process.on('exit', () => { for (const d of made) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } });
 export function tmpDir(prefix = 'seaready-test-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
 }
 
 export function write(root, rel, content) {

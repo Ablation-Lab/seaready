@@ -134,7 +134,7 @@ test('should-fix 9: camelCase names that start with the keyword are flagged', ()
 test('F: reading a home-folder cache is not reported as writing there', () => {
   const res = check(repo({ ...cleanPlugin(), 'skills/quiet-notes/scripts/r.mjs': "const c = fs.readFileSync(path.join(os.homedir(), '.cache-x.json'));\n" }));
   const dh = sheetOf(res).split('## 3. Data handling')[1].split('## 4.')[0];
-  assert.ok(!/writes files in its own folder/.test(dh), dh);
+  assert.ok(!/possibly files under the user.s home or app-data folder/.test(dh), dh);
 });
 
 test('D: named HTML entities are escaped', () => {

@@ -80,6 +80,6 @@ test('paths that leave the plugin, however they are written', () => {
 test('more home-folder writes count as writes', () => {
   for (const [ext, code] of [['sh', 'sed -i "s/x/y/" ~/.bashrc\n'], ['sh', 'ln -s "$PWD/x" ~/.local/bin/x\n'], ['sh', 'RC="$HOME/.bashrc"\necho x >> "$RC"\n'], ['mjs', "fs.symlinkSync('x', path.join(os.homedir(), '.x'));\n"], ['py', "Path.home().joinpath('.x').touch()\n"]]) {
     const res = check(repo({ ...cleanPlugin(), [`skills/quiet-notes/scripts/w.${ext}`]: code }));
-    assert.match(fs.readFileSync(path.join(res.outDir, 'submission-sheet.md'), 'utf8'), /writes files in its own folder|reads and writes files outside/, code);
+    assert.match(fs.readFileSync(path.join(res.outDir, 'submission-sheet.md'), 'utf8'), /possibly files under the user.s home or app-data folder/, code);
   }
 });

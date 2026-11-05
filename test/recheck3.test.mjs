@@ -66,10 +66,10 @@ test('LOW-MED: home-folder writes further away or with other calls are counted',
   for (const code of cases) {
     const res = check(repo({ ...cleanPlugin(), 'skills/quiet-notes/scripts/w.mjs': code }));
     const dh = fs.readFileSync(path.join(res.outDir, 'submission-sheet.md'), 'utf8').split('## 3. Data handling')[1];
-    assert.match(dh, /writes files in its own folder|reads and writes files outside/, code);
+    assert.match(dh, /possibly files under the user.s home or app-data folder/, code);
   }
   const py = check(repo({ ...cleanPlugin(), 'skills/quiet-notes/scripts/w.py': "p = Path.home() / '.w' / 'x.txt'\np.write_text('x')\n" }));
-  assert.match(fs.readFileSync(path.join(py.outDir, 'submission-sheet.md'), 'utf8'), /writes files in its own folder|reads and writes files outside/);
+  assert.match(fs.readFileSync(path.join(py.outDir, 'submission-sheet.md'), 'utf8'), /possibly files under the user.s home or app-data folder/);
 });
 
 test('LOW: more launcher spellings', () => {

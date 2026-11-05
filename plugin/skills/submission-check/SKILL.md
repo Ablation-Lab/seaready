@@ -76,7 +76,7 @@ Add a section headed `## Judgement` to the very end of `report.md`: first the "N
 
 ## 6. Finish the submission sheet
 
-`submission-sheet.md` has the portal's five steps filled in from the repo. Answers marked **DRAFT** were inferred by the script. Rewrite each DRAFT answer so it is accurate for this plugin, using what you learned in steps 3 and 4, and keep it consistent with the README's Privacy section. Remove the word DRAFT from answers you have checked. Leave a note on anything you couldn't confirm.
+`submission-sheet.md` has the portal's five steps filled in from the repo. Answers marked **DRAFT** were inferred by the script. Rewrite each DRAFT answer so it is accurate for this plugin, using what you learned in steps 3 and 4, and keep it consistent with the README's Privacy section. Remove the word DRAFT from answers you have checked. Where an answer says **CHECK THE CODE**, a home-folder or app-data pattern matched but the script can't tell whether the plugin really reads or writes there: read the code it names and write what it actually does. Leave a note on anything you couldn't confirm.
 
 ## 7. Reply
 

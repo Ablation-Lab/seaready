@@ -486,7 +486,9 @@ function frontmatterHooks(p, fm, F) {
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { hooks: checkHooks(`${p} (front matter hooks)`, JSON.stringify(obj.hooks || obj.modules ? obj : { hooks: obj }), F, false) };
   F.add('WARN', 'HOOKS', 'Hooks in front matter that this check can\'t fully read', { file: p, line: fm.lines.hooks, detail: 'Claude Code runs these while the skill is active. Their text was still scanned for commands, hosts and file writes; read them in the judgement step.' });
   // Still check what we can line by line: launchers in "command:" lines, and HTTP hook URLs.
-  for (const m of raw.matchAll(/^\s*(?:-\s*)?command:\s*(.+)$/gm)) launcherFinding(m[1].replace(/^["']|["']$/g, ''), 'hook in front matter', p, F);
+  // [ \t] rather than \s: \s crosses line breaks, which made this quadratic on runs of blank lines.
+  // The value may be on the same line or, in YAML, on the next indented line.
+  for (const m of raw.matchAll(/^[ \t]*(?:-[ \t]*)?command:[ \t]*(?:\r?\n[ \t]+)?(\S.*)$/gm)) launcherFinding(m[1].replace(/^["']|["']$/g, ''), 'hook in front matter', p, F);
   const httpUrls = /\btype:\s*["']?http\b/.test(raw) ? [...raw.matchAll(/\burl:\s*["']?(https?:\/\/[^\s"']+)/g)].map(m => m[1]) : [];
   return { hooksRaw: raw, hooksHttp: httpUrls };
 }
@@ -919,23 +921,30 @@ export function checkCode(ctx, F, readme) {
   if (fails.length) F.add('FAIL', 'CHAT-HISTORY', 'Reads chat history, transcripts, memory or conversation summaries', { file: fails[0].file, line: fails[0].line, policy: '1G', detail: fmt(fails), fix: 'Policy 1G: software must not query or extract data from Claude\'s memory, chat history or conversation summaries. If this is local-only metadata (e.g. titles) and core to the plugin, say exactly what is read and what never leaves the machine in a "For reviewers" section — and expect a reviewer to decide.' });
   if (warns.length) F.add('WARN', 'CHAT-HISTORY', 'Touches session state or mentions transcripts', { file: warns[0].file, line: warns[0].line, policy: '1G', detail: fmt(warns) + '\nCheck by reading the code: listing running sessions is different from reading what was said in them.' });
   // What the docs say the plugin (or the app it drives) reads.
-  const docHits = [];
+  const docHits = [], otherToolHits = [];
   const docFiles = [readme?.path, ...[...files.keys()].filter(p => p.startsWith(base) && isInstr(p))].filter(Boolean);
   for (const dp of [...new Set(docFiles)]) {
     const t = files.get(dp)?.data.toString('utf8') || '';
+    const otherTools = comparisonRanges(t);
     // Sentences, and every line on its own (table rows and list items aren't sentences).
+    let from = 0;
     for (const sentence of t.split(/(?<=[.!?])\s+|\n/)) {
+      const at = t.indexOf(sentence, from);
+      if (at >= 0) from = at + sentence.length;
       if (!/\b(reads?|reading|scans?|parses?|opens?|loads?|looks? (at|in)|uses?|lists?|finds?)\b/i.test(sentence)) continue;
       for (const [re, what, sev] of R.CHAT_HISTORY) {
         const m = sentence.match(re);
         if (!m) continue;
         const before = sentence.slice(0, m.index);
         if (/\b(never|not|doesn't|does not|don't|no|without|nor|instead of)\b[^,;]*$/i.test(before)) continue;
-        docHits.push({ file: dp, line: lineOf(t, t.indexOf(sentence)), what, sev, text: sentence.trim().slice(0, 200) });
+        const hit = { file: dp, line: lineOf(t, at >= 0 ? at : t.indexOf(sentence)), what, sev, text: sentence.trim().slice(0, 200) };
+        // In a section that compares this plugin with other tools, the sentence is about them.
+        if (at >= 0 && otherTools.some(([s, e]) => at >= s && at < e)) otherToolHits.push(hit); else docHits.push(hit);
         break;
       }
     }
   }
+  if (otherToolHits.length) F.add('INFO', 'CHAT-HISTORY', 'Chat-history words in a section about other tools', { file: otherToolHits[0].file, line: otherToolHits[0].line, policy: '1G', detail: otherToolHits.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThese are in a comparison section (such as How it compares), so they describe other tools, not this plugin. Read them to confirm.' });
   const docFails = docHits.filter(h => h.sev === 'FAIL');
   if (docFails.length && !fails.length) F.add('FAIL', 'CHAT-HISTORY', 'The docs say it reads chat history, transcripts or conversation summaries', { file: docFails[0].file, line: docFails[0].line, policy: '1G', detail: docFails.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThe code doing it may be outside the plugin folder (an app the plugin starts); its behaviour still counts.', fix: 'Policy 1G forbids querying chat history and conversation summaries (auto-generated titles count). If only local metadata is read and it never reaches Claude, explain exactly that for reviewers — and expect a reviewer decision, possibly a rejection.' });
   else if (docHits.length && !fails.length && !warns.length) F.add('WARN', 'CHAT-HISTORY', 'The docs mention reading Claude Code session data', { file: docHits[0].file, line: docHits[0].line, policy: '1G', detail: docHits.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') });
@@ -1032,6 +1041,45 @@ export function disclosed(re, text) {
   });
 }
 
+// Blanks <style>, <script>, <template> and <? ?> blocks (an unclosed one runs to the end), found with
+// indexOf in one pass rather than a lazy regex that rescans to the end for every unclosed tag.
+function hideBlocks(text, blank) {
+  const lower = text.toLowerCase();
+  let out = '', pos = 0;
+  const open = /<(style|script|template)\b|<\?/gi;
+  for (;;) {
+    open.lastIndex = pos;
+    const m = open.exec(text);
+    if (!m) return out + text.slice(pos);
+    const close = m[0] === '<?' ? '?>' : `</${m[1].toLowerCase()}`;
+    let end = lower.indexOf(close, m.index + m[0].length);
+    if (end < 0) end = text.length;
+    else if (m[0] === '<?') end += 2;
+    else { const gt = text.indexOf('>', end); end = gt < 0 ? text.length : gt + 1; }
+    out += text.slice(pos, m.index) + blank(text.slice(m.index, end));
+    pos = end;
+  }
+}
+
+// Character ranges of sections that compare the plugin with other tools ("How it compares",
+// "Alternatives", "Similar tools", "Related projects", "See also"), each up to the next heading of the
+// same or a higher level. Found line by line.
+export function comparisonRanges(t) {
+  const out = [];
+  const lines = String(t).split('\n');
+  let pos = 0, open = null;
+  for (const line of lines) {
+    const h = line.match(/^(#{1,6})[ \t]+(.*)$/);
+    if (h) {
+      if (open && h[1].length <= open.level) { out.push([open.start, pos]); open = null; }
+      if (!open && /^(how (it|this) compares|comparison|compared (with|to)|alternatives|similar (plugins|tools|skills|projects)|related (plugins|tools|skills|projects)|see also|other tools)\b/i.test(h[2].trim())) open = { level: h[1].length, start: pos };
+    }
+    pos += line.length + 1;
+  }
+  if (open) out.push([open.start, pos]);
+  return out;
+}
+
 // The README as a reader sees it rendered: no HTML comments (an unclosed one hides the rest),
 // no link reference definitions (including the [//]: # (comment) idiom), and link text without
 // its target. Line breaks are kept so line numbers still match.
@@ -1040,26 +1088,42 @@ export function visibleText(md) {
   const src = String(md || '');
   // One pass left to right: whichever starts first, a code fence (kept as written) or an HTML
   // comment (hidden, also one left open, even if it wraps a fence), wins.
-  const parts = [];
-  let pos = 0;
-  const FENCE = /^ {0,3}(```|~~~)[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/m;
-  while (pos < src.length) {
-    const rest = src.slice(pos);
-    const f = rest.match(FENCE), c = rest.indexOf('<!--');
-    const fAt = f ? f.index : -1;
-    if (c >= 0 && (fAt < 0 || c < fAt)) {
-      const end = rest.indexOf('-->', c + 4);
-      const stop = end < 0 ? rest.length : end + 3;
-      parts.push({ text: rest.slice(0, c) }, { text: blank(rest.slice(c, stop)), raw: true });
-      pos += stop;
-    } else if (fAt >= 0) {
-      parts.push({ text: rest.slice(0, fAt) }, { text: f[0], raw: true });
-      pos += fAt + f[0].length;
-    } else { parts.push({ text: rest }); break; }
+  // Linear: line starts and, for each line, the next closing fence of each kind are worked out once,
+  // so no position is scanned more than a few times however the fences and comments are arranged.
+  const lineStart = [0];
+  for (let i = 0; i < src.length; i++) if (src[i] === '\n') lineStart.push(i + 1);
+  const lineAt = k => src.slice(lineStart[k], k + 1 < lineStart.length ? lineStart[k + 1] - 1 : src.length);
+  const nLines = lineStart.length;
+  const opener = new Array(nLines).fill(null);
+  const nextClose = { '```': new Int32Array(nLines + 1).fill(-1), '~~~': new Int32Array(nLines + 1).fill(-1) };
+  for (let k = nLines - 1; k >= 0; k--) {
+    const l = lineAt(k);
+    const m = l.match(/^ {0,3}(```|~~~)/);
+    if (m) opener[k] = m[1];
+    for (const mk of ['```', '~~~']) nextClose[mk][k] = /^ {0,3}(```|~~~)[ \t]*$/.test(l) && l.trim().startsWith(mk) && l.trim().length >= 3 && l.trim().replace(/[ \t]+$/, '') === mk ? k : nextClose[mk][k + 1];
   }
-  return parts.map(p => (p.raw ? p.text : p.text
-    .replace(/<(style|script|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, blank)
-    .replace(/<\?[\s\S]*?(?:\?>|$)/g, blank)
+  // The first fence at or after line k that has a closing line after it.
+  const fenceFrom = k => { for (; k < nLines; k++) if (opener[k] && nextClose[opener[k]][k + 1] >= 0) return k; return -1; };
+  const parts = [];
+  let pos = 0, k = 0, fk = fenceFrom(0), c = src.indexOf('<!--');
+  while (pos < src.length) {
+    while (k < nLines && lineStart[k] < pos) k++;
+    if (fk >= 0 && fk < k) fk = fenceFrom(k);
+    if (c >= 0 && c < pos) c = src.indexOf('<!--', pos);
+    const fAt = fk >= 0 ? lineStart[fk] : -1;
+    if (c >= 0 && (fAt < 0 || c < fAt)) {
+      const end = src.indexOf('-->', c + 4);
+      const stop = end < 0 ? src.length : end + 3;
+      parts.push({ text: src.slice(pos, c) }, { text: blank(src.slice(c, stop)), raw: true });
+      pos = stop;
+    } else if (fAt >= 0) {
+      const closeLine = nextClose[opener[fk]][fk + 1];
+      const stop = closeLine + 1 < nLines ? lineStart[closeLine + 1] - 1 : src.length;
+      parts.push({ text: src.slice(pos, fAt) }, { text: src.slice(fAt, stop), raw: true });
+      pos = stop;
+    } else { parts.push({ text: src.slice(pos) }); break; }
+  }
+  return parts.map(p => (p.raw ? p.text : hideBlocks(p.text, blank)
     .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<[^>\n]*>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/gm, '')   // link reference definitions only
     .replace(/!\[(?:[^[\]\n]|\[[^[\]\n]*\])*\](?:\([^)\n]*\)|\[[^\]\n]*\])/g, ' ')     // images, inline or by reference: alt text isn't shown
     .replace(/<img\b[^>]{0,2000}>/gi, blank)
