@@ -56,6 +56,14 @@ export function parseArgs(argv) {
   return o;
 }
 
+// True for patterns that run in roughly linear time on a line (see loadPrivateTerms).
+export function isSimplePattern(src) {
+  const bare = src.replace(/\\./g, 'x').replace(/\[(?:[^\]\\]|\\.)*\]/g, 'x');
+  if (/\)\s*(?:[*+]|\{\d*,?\d*\})/.test(bare)) return false;      // a repeated group
+  if (/\\[1-9]/.test(src)) return false;                          // a back-reference
+  return (bare.match(/[*+]|\{\d+,\}/g) || []).length <= 1;
+}
+
 // Private terms: one extended regex per line, # comments (the privacy-check format).
 // strict = the user passed the file: a broken pattern stops the run (fail loudly). Otherwise
 // (the checked repo's own .privacy/patterns.txt) a broken pattern is reported and skipped.
@@ -66,10 +74,11 @@ function loadPrivateTerms(file, strict, F) {
     const t = l.trim();
     if (!t || t.startsWith('#')) return;
     const src = t.replace(/\[\[:space:\]\]/g, '\\s').replace(/\[\[:alnum:\]\]/g, '[A-Za-z0-9]').replace(/\[\[:alpha:\]\]/g, '[A-Za-z]').replace(/\[\[:digit:\]\]/g, '[0-9]');
-    // A quantified group that itself contains a quantifier or an alternation, such as (a+)+ or
-    // (a|a)+, can take exponential time on some lines. Such patterns are skipped, not run.
-    if (/\((?:[^()\\]|\\.)*(?:[+*}]|\|)(?:[^()\\]|\\.)*\)\s*[+*{]/.test(src)) {
-      F.add('WARN', 'PRIVATE-TERMS', `Pattern on line ${i + 1} of the private-terms list could be very slow, so it was skipped`, { detail: 'A repeated group containing a repeat or an alternation (like (a+)+ or (a|b)+). Rewrite it without the nesting.' });
+    // Only patterns that can't take exponential or high-polynomial time are run: no repeated
+    // groups like (a+)+ or (a|b)+, no back-references, and at most one unbounded repeat (* + {n,})
+    // such as .*. Lines are also capped at 4096 characters where they're matched.
+    if (!isSimplePattern(src)) {
+      F.add('WARN', 'PRIVATE-TERMS', `Pattern on line ${i + 1} of the private-terms list could be very slow, so it was skipped`, { detail: 'Allowed: words, character classes, alternation, anchors and at most one * or + that is not on a group. Rewrite it more simply.' });
       return;
     }
     try { terms.push({ re: new RegExp(src, 'i'), n: i + 1, source: `line ${i + 1}`, file: path.basename(file) }); }
@@ -319,6 +328,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   const mf = guard(F, 'manifest', () => C.checkManifest(ctx, F), {});
   ctx.manifest = mf.manifest;
   const components = guard(F, 'component', () => C.checkComponents(ctx, F), { skills: [], commands: [], agents: [] });
+  ctx.components = components;
   const code = guard(F, 'code', () => C.checkCode(ctx, F, readme), { effects: [], hosts: [], envReads: [] });
   guard(F, 'Unicode', () => C.checkUnicode(ctx, F));
   guard(F, 'personal-data', () => C.checkPersonal(ctx, F));

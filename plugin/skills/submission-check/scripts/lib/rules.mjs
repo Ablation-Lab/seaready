@@ -175,7 +175,7 @@ export const PERSONAL_WEBMAIL = /^(gmail\.com|googlemail\.com|outlook\.com|hotma
 // Bounded parts, so a long run of letters with no @ can't make the scan slow.
 export const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/g;
 // Calls that write files (to tell a home-folder read from a write).
-export const WRITE_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|createWriteStream|mkdir(Sync)?|copyFile(Sync)?|rename(Sync)?|Set-Content|Out-File|Add-Content|New-Item|Copy-Item|Move-Item|File\.(Write|Copy|Move|Create)|Directory\.Create)\b|\bopen\([^)]*['"][wa]/;
+export const WRITE_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|createWriteStream|mkdir(Sync)?|copyFile(Sync)?|cp(Sync)?|rename(Sync)?|writeSync|write_text|write_bytes|mkdirs?|makedirs|Set-Content|Out-File|Add-Content|New-Item|Copy-Item|Move-Item|File\.(Write|Copy|Move|Create|AppendAll)|Directory\.Create)\b|\bopen(Sync)?\(.*,\s*['"][wa+]/;
 // Addresses that are fine to publish.
 export const SAFE_EMAIL = /@users\.noreply\.github\.com$|^noreply@anthropic\.com$|^noreply@github\.com$|@example\.(com|org|net|invalid|test)$|\.(invalid|test|example|localhost)$|@example$|@test$|@localhost$|@users\.noreply\.gitlab\.com$|^git@github\.com$/i;
 // Placeholder user names that are fine in docs.

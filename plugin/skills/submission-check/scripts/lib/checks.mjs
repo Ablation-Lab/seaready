@@ -413,12 +413,24 @@ export function checkComponents(ctx, F) {
   for (const h of asList(m.hooks)) {
     if (typeof h === 'string') {
       const hp = joinPath(pluginDir, h);
-      if (hp === hooksPath) continue;
+      if (hp === hooksPath || (base && !hp.startsWith(base))) continue;   // outside the plugin: MANIFEST-PATH reports it
       if (!files.has(hp)) { F.add('FAIL', 'HOOKS', `hooks file named in plugin.json isn't in the plugin: ${h}`, { file: pj, portal: 'Blocks' }); continue; }
       addHooks(one(hp, () => checkHooks(hp, files.get(hp).data.toString('utf8'), F, !!pluginDir)));
     } else if (h && typeof h === 'object') {
       addHooks(one(pj, () => checkHooks(`${pj} (inline hooks)`, JSON.stringify(h.hooks || h.modules ? h : { hooks: h }), F, !!pluginDir)));
     }
+  }
+  // LSP servers start a command too: .lsp.json and lspServers in plugin.json.
+  const lspPath = base + '.lsp.json';
+  const addLsp = r => { if (r) out.lsp = [...(out.lsp || []), ...r]; };
+  if (files.has(lspPath)) addLsp(one(lspPath, () => checkLsp(lspPath, files.get(lspPath).data.toString('utf8'), F)));
+  for (const s of asList(m.lspServers)) {
+    if (typeof s === 'string') {
+      const sp = joinPath(pluginDir, s);
+      if (sp === lspPath || (base && !sp.startsWith(base))) continue;
+      if (!files.has(sp)) { F.add('FAIL', 'LSP', `LSP file named in plugin.json isn't in the plugin: ${s}`, { file: pj, portal: 'Blocks' }); continue; }
+      addLsp(one(sp, () => checkLsp(sp, files.get(sp).data.toString('utf8'), F)));
+    } else if (s && typeof s === 'object') addLsp(one(pj, () => checkLsp(`${pj} (inline lspServers)`, JSON.stringify(s), F)));
   }
   for (const s of asList(m.mcpServers)) {
     if (typeof s === 'string') {
@@ -516,8 +528,10 @@ function checkInstructionBody(p, body, startLine, F) {
 
 // Package launchers (npx, uvx, bunx, pnpm dlx, yarn dlx, pipx run, uv run): unpinned blocks,
 // pinned is held. Returns true if the command uses one.
-function launcherFinding(c, what, file, F) {
-  if (!/^\s*(npx|uvx|bunx)(\.cmd)?\b|\b(pnpm|yarn) dlx\b|\b(npm|pnpm) exec\b|\bpipx run\b|\buv run\b|(^|\s)(npx|uvx|bunx)\s/.test(c)) return false;
+function launcherFinding(cmd, what, file, F) {
+  // Spaces collapsed and .cmd/.exe dropped, so "npm  exec" and "npm.cmd exec" read as "npm exec".
+  const c = cmd.replace(/\s+/g, ' ').replace(/\b(npm|pnpm|yarn|npx|pnpx|bunx?|uvx?|pipx|deno)\.(cmd|exe)\b/gi, '$1');
+  if (!/(^|[\s/\\;&|(])(npx|pnpx|uvx|bunx)(\s|$)|\b(npm|pnpm|yarn) (exec|x|dlx)\b|\bbun x\b|\bpipx run\b|\buv (run|tool run)\b|\bdeno run\b.*\bnpm:/.test(c)) return false;
   const pinned = /@\d+\.\d+\.\d+(\s|$)|==\d+\.\d+\.\d+|--locked|--frozen/.test(c);
   F.add(pinned ? 'WARN' : 'FAIL', 'LAUNCHER', pinned ? `${what} runs a pinned package from a registry` : `${what} runs an unpinned package`, { file, detail: c, portal: pinned ? 'Held for a reviewer ("Runs a pinned npx or uvx package")' : 'Blocks ("Unpinned npx/uvx launcher")', fix: pinned ? 'Bundle the package\'s code to avoid the hold.' : 'Pin an exact version (pkg@1.2.3, pkg==1.2.3) or use uv run --locked.' });
   return true;
@@ -546,7 +560,7 @@ function checkHooks(p, text, F, subfolder) {
             F.add('FAIL', 'HOOKS', `A command hook in hooks.${ev} needs "command" as text (and "args" as a list of text)`, { file: p, portal: 'Blocks' }); continue;
           }
           const c = [hk.command, ...(hk.args || [])].join(' ');
-          cmds.push({ event: ev, command: c });
+          cmds.push({ event: ev, command: c, file: p });
           if (subfolder && (/\$\{?(?!CLAUDE_PLUGIN_ROOT\b)[A-Za-z_]/.test(c) || /\$\(|`|\*|\s-c\s/.test(c)))
             F.add('FAIL', 'HOOKS', 'Hook command uses a variable other than ${CLAUDE_PLUGIN_ROOT}, a substitution, wildcard or inline program', { file: p, detail: c, portal: 'Blocks when the plugin is in a subfolder' });
           launcherFinding(c, `hook (${ev})`, p, F);
@@ -558,6 +572,24 @@ function checkHooks(p, text, F, subfolder) {
   }
   F.add('INFO', 'HOOKS', `Hooks: ${cmds.length} command hook(s)`, { file: p, detail: cmds.map(c => `${c.event}: ${c.command}`).join('\n') || 'none' });
   return { events: Object.keys(h.hooks || {}), commands: cmds };
+}
+
+// .lsp.json or inline lspServers: { name: { command, args, ... } }.
+function checkLsp(p, text, F) {
+  let m;
+  try { m = JSON.parse(text); } catch (e) { F.add('FAIL', 'LSP', 'LSP config can\'t be parsed', { file: p, detail: e.message, portal: 'Blocks' }); return []; }
+  const servers = m && typeof m === 'object' && !Array.isArray(m) ? (m.lspServers || m) : null;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) { F.add('FAIL', 'LSP', 'LSP config must be an object of servers keyed by name', { file: p, portal: 'Blocks' }); return []; }
+  const out = [];
+  for (const [name, s] of Object.entries(servers)) {
+    if (!s || typeof s !== 'object' || Array.isArray(s) || typeof s.command !== 'string' || (s.args != null && (!Array.isArray(s.args) || s.args.some(a => typeof a !== 'string')))) {
+      F.add('FAIL', 'LSP', `LSP server "${name}" needs "command" as text (and "args" as a list of text)`, { file: p, portal: 'Blocks' }); continue;
+    }
+    out.push({ name, command: s.command, args: s.args || [], file: p });
+    launcherFinding([s.command, ...(s.args || [])].join(' '), `LSP server "${name}"`, p, F);
+  }
+  if (out.length) F.add('INFO', 'LSP', `LSP servers: ${out.length}`, { file: p, detail: out.map(s => `${s.name}: ${[s.command, ...s.args].join(' ')}`).join('\n') });
+  return out;
 }
 
 function checkMcp(p, text, F, ctx) {
@@ -572,7 +604,7 @@ function checkMcp(p, text, F, ctx) {
     if ((s.command != null && typeof s.command !== 'string') || (s.args != null && (!Array.isArray(s.args) || s.args.some(a => typeof a !== 'string'))) || (s.url != null && typeof s.url !== 'string')) {
       F.add('FAIL', 'MCP', `MCP server "${name}": command and url must be text, args a list of text`, { file: p, portal: 'Blocks (".mcp.json can\'t be parsed")' }); continue;
     }
-    out.push({ name, ...s });
+    out.push({ name, ...s, file: p });
     if (s.url != null) {
       if (s.url !== '' && !/^(https|wss):\/\//.test(s.url) && !/^\$\{user_config\./.test(s.url)) F.add('FAIL', 'MCP', `MCP server "${name}" URL is not https`, { file: p, detail: s.url, portal: 'Blocks' });
       if (!s.type) F.add('FAIL', 'MCP', `Remote MCP server "${name}" needs type http, sse or ws`, { file: p, portal: 'Blocks' });
@@ -678,7 +710,7 @@ export function checkCode(ctx, F, readme) {
   const base = pluginDir ? pluginDir + '/' : '';
   // Disclosure counts only in the sections meant for it ("What it runs, reads and writes",
   // Privacy, data handling); a "feature requests" line elsewhere is not a disclosure.
-  const rfull = readme?.text || '';
+  const rfull = visibleText(readme?.text || '');   // only what a reader of the rendered README sees
   const rtext = readme ? sections(rfull, new RegExp(`${DISCLOSURE_HEADING.source}|privacy|data handling|network|permissions`, 'i')) : '';
   const evidence = Object.fromEntries(R.SIDE_EFFECTS.map(s => [s.id, []]));
   const hosts = new Map();
@@ -691,9 +723,15 @@ export function checkCode(ctx, F, readme) {
     const isCode = R.CODE_EXT.test(p);
     const instr = isInstr(p);
     const isTest = R.TEST_PATH.test(p);
-    if (!isCode && !instr && !/hooks\.json$|\.mcp\.json$/.test(p)) continue;
     const text = f.data.toString('utf8');
     const lines = text.split('\n');
+    // Every text file is searched for real secrets. Only code and instruction files are read line
+    // by line for behaviour; hook, MCP and LSP commands come from the parsed config below, wherever
+    // that config is declared (hooks.json, .mcp.json, plugin.json inline, or a file it names).
+    if (!isCode && !instr) {
+      lines.forEach((line, i) => { if (line.length <= 4096) for (const [re, what] of R.LEAK_SHAPES) if (re.test(line)) F.add('FAIL', 'SECRET', `Looks like a real ${what}`, { file: p, line: i + 1, portal: 'Blocks', fix: 'Remove it, rotate it, and rewrite history if it was ever pushed.' }); });
+      continue;
+    }
     // In instruction files, code is behaviour and prose isn't: fenced blocks, indented code and
     // `inline code` count; "never edit settings.json" in a sentence doesn't.
     const fenced = new Set();
@@ -756,7 +794,7 @@ export function checkCode(ctx, F, readme) {
       if (!codeText) return;
       for (const eff of R.SIDE_EFFECTS) if (eff.code.test(codeText)) {
         // A home-folder path usually goes into a variable and is written a line or two later.
-        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 4).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
+        const nearWrite = eff.id === 'home-files' && lines.slice(Math.max(0, i - 1), i + 7).some(l => l.length <= 4096 && R.WRITE_CALL.test(l));
         evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140), allowed: patternData, nearWrite });
       }
       for (const m of codeText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
@@ -766,6 +804,25 @@ export function checkCode(ctx, F, readme) {
       }
       if (isCode) for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(line)) chatHits.push({ file: p, line: ln, what, sev, text: trimmed.slice(0, 140), instr, allowed: patternData });
     });
+  }
+  // Commands and URLs from hooks, MCP and LSP servers, from wherever they were declared.
+  const comp = ctx.components || {};
+  const cfg = [];
+  for (const c of comp.hooks?.commands || []) cfg.push({ file: c.file, text: c.command, what: `hook (${c.event})` });
+  for (const list of [comp.mcp, comp.lsp]) for (const s of list || []) {
+    if (typeof s.command === 'string') cfg.push({ file: s.file, text: [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(' '), what: `${list === comp.lsp ? 'LSP' : 'MCP'} server ${s.name}` });
+    if (typeof s.url === 'string' && s.url) cfg.push({ file: s.file, text: s.url, what: `MCP server ${s.name} (remote)`, remote: true });
+  }
+  for (const it of cfg) {
+    const allowed = ignore.has(it.file);
+    const shown = `${it.what}: ${it.text}`.slice(0, 140);
+    for (const eff of R.SIDE_EFFECTS) if (eff.code.test(it.text) || (it.remote && eff.id === 'network'))
+      evidence[eff.id].push({ file: it.file, text: shown, allowed, nearWrite: R.WRITE_CALL.test(it.text) || /(^|\s)>{1,2}\s*\S/.test(it.text) });
+    for (const m of it.text.matchAll(/(?:https?|wss?):\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
+      const h = m[1].toLowerCase();
+      if (!hosts.has(h) || (hosts.get(h).allowed && !allowed)) hosts.set(h, { file: it.file, allowed, cfg: true });
+    }
+    for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(it.text)) chatHits.push({ file: it.file, what, sev, text: shown, allowed });
   }
   // Environment variable reads.
   const byName = new Map();
@@ -830,19 +887,27 @@ export function checkCode(ctx, F, readme) {
   // README vs code.
   // (rtext is declared at the top of checkCode)
   const effects = [];
+  const at = e => `${e.file}${e.line ? ':' + e.line : ''}  ${e.text}`;
+  // Hosts the code (or a hook or MCP command) actually contacts: network use only counts as
+  // disclosed when each of them is named in the what-it-runs or Privacy sections, so a
+  // "Network: none" line next to a request can't pass.
+  const netFilesEarly = new Set(evidence.network.filter(e => !e.allowed).map(e => e.file));
+  const contacted = [...hosts].filter(([, a]) => !a.allowed && (a.cfg || netFilesEarly.has(a.file))).map(([h]) => h);
   for (const eff of R.SIDE_EFFECTS) {
     const all = evidence[eff.id];
     const ev = all.filter(e => !e.allowed);
     if (!ev.length && all.length) {
-      F.add('ALLOWED', 'DISCLOSE', `Only in files marked as pattern data: ${eff.label}`, { file: all[0].file, line: all[0].line, policy: '2B, 3C', detail: all.slice(0, 4).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), allowedReason: PATTERN_REASON });
+      F.add('ALLOWED', 'DISCLOSE', `Only in files marked as pattern data: ${eff.label}`, { file: all[0].file, line: all[0].line, policy: '2B, 3C', detail: all.slice(0, 4).map(at).join('\n'), allowedReason: PATTERN_REASON });
       continue;
     }
     if (!ev.length) continue;
-    const mentioned = disclosed(eff.readme, rtext);
+    const unnamed = eff.id === 'network' ? contacted.filter(h => !rtext.toLowerCase().includes(h)) : [];
+    const mentioned = disclosed(eff.readme, rtext) && !unnamed.length;
+    if (unnamed.length) ev.unshift({ file: ev[0].file, line: ev[0].line, text: `Hosts contacted but not named in the what-it-runs or Privacy sections: ${unnamed.join(', ')}` });
     const writes = eff.id === 'home-files' ? ev.filter(e => e.nearWrite).length : undefined;
     effects.push({ id: eff.id, label: eff.label, count: ev.length, mentioned, writes, examples: ev.slice(0, 4) });
     const sev = mentioned ? 'INFO' : (['registry', 'shortcut', 'autostart', 'claude-config', 'network', 'home-files'].includes(eff.id) ? 'FAIL' : 'WARN');
-    F.add(sev, 'DISCLOSE', `${mentioned ? 'Disclosed' : 'Not found in the README'}: ${eff.label}`, { file: ev[0].file, line: ev[0].line, policy: '2B, 3C', detail: ev.slice(0, 4).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n') + (ev.length > 4 ? `\n(+${ev.length - 4} more)` : ''), portal: mentioned ? null : 'Security scan ("does something the README doesn\'t disclose")', fix: mentioned ? 'Check the README describes this accurately (where, when, how to undo).' : `Describe it in the README's "What it runs, reads and writes" section, or remove it.` });
+    F.add(sev, 'DISCLOSE', `${mentioned ? 'Disclosed' : 'Not found in the README'}: ${eff.label}`, { file: ev[0].file, line: ev[0].line, policy: '2B, 3C', detail: ev.slice(0, 4).map(at).join('\n') + (ev.length > 4 ? `\n(+${ev.length - 4} more)` : ''), portal: mentioned ? null : 'Security scan ("does something the README doesn\'t disclose")', fix: mentioned ? 'Check the README describes this accurately (where, when, how to undo).' : `Describe it in the README's "What it runs, reads and writes" section, or remove it.` });
   }
   // A host in a file that also makes requests (or in instructions Claude follows) may be contacted;
   // a host anywhere else is probably a link in a message.
@@ -850,7 +915,7 @@ export function checkCode(ctx, F, readme) {
   for (const [h, at] of hosts) {
     if (rfull.replace(/<!--[\s\S]*?-->/g, ' ').toLowerCase().includes(h)) continue;   // a host named only in an HTML comment doesn't count
     if (at.allowed) { F.add('ALLOWED', 'DISCLOSE-HOST', `Host ${h} appears only in files marked as pattern data`, { file: at.file, line: at.line, policy: '2B, 3F', allowedReason: PATTERN_REASON, mergeKey: h }); continue; }
-    const maybeContacted = netFiles.has(at.file) || isInstr(at.file);
+    const maybeContacted = at.cfg || netFiles.has(at.file) || isInstr(at.file);
     F.add(maybeContacted ? 'WARN' : 'INFO', 'DISCLOSE-HOST', `Host ${h} in the ${maybeContacted ? 'code' : 'text of a message or link'} isn't named in the README`, { file: at.file, line: at.line, policy: '2B, 3F', detail: maybeContacted ? 'List every domain the plugin contacts or tells Claude to fetch.' : 'No request code in this file, so it is probably a link; check it isn\'t contacted.', portal: maybeContacted ? 'Security scan ("Sends data to an undisclosed destination") if contacted' : null });
   }
   for (const nc of R.NEGATIVE_CLAIMS) {
@@ -869,14 +934,28 @@ export function checkCode(ctx, F, readme) {
 // "makes no network requests" and "never sends anything" don't disclose network use.
 // A denial after the match counts too: "Network: none", "| Network requests | None |".
 export function disclosed(re, text) {
-  const DENY = /\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor|n\/a)\b/i;
-  return String(text || '').replace(/<!--[\s\S]*?-->/g, ' ').split(/(?<=[.!?])\s+|\n/).some(s => {
+  const DENY = /\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor|n\/a|zero|disabled|unused)\b/i;
+  return visibleText(text).split(/(?<=[.!?])\s+|\n/).some(raw => {
+    // Formatting doesn't change the meaning. (A single ~ is kept: it's the home folder in ~/x.)
+    const s = raw.replace(/[`*]|~~|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '');
     const m = s.match(re);
     if (!m) return false;
     if (DENY.test(s.slice(0, m.index))) return false;
-    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 30);
-    return !/^[\s:|*_-]*(\w+\s+){0,2}?[\s:|*_-]*(none|no|nothing|never|n\/a)\b/i.test(after);
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    if (/^-?free\b/i.test(after)) return false;                                  // "network-free"
+    if (/^[\w ]{0,25}?[\s:|()[\]]+[-–—]+\s*(\||[).\]]|$)/.test(after)) return false;   // a dash cell or "– none"
+    return !/^[\w ]{0,25}?[\s:|()[\]\-–—]*\b(none|no|nothing|never|n\/a|zero|0|disabled|off|not|unused)\b/i.test(after);
   });
+}
+
+// The README as a reader sees it rendered: no HTML comments (an unclosed one hides the rest),
+// no link reference definitions (including the [//]: # (comment) idiom), and link text without
+// its target. Line breaks are kept so line numbers still match.
+export function visibleText(md) {
+  return String(md || '')
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, m => m.replace(/[^\n]/g, ' '))
+    .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/gm, '')
+    .replace(/\]\([^)\n]*\)/g, ']');
 }
 
 // ---------------------------------------------------------------------------------------------
