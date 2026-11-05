@@ -106,7 +106,7 @@ export function renderSheet(meta, facts) {
 
   out.push('## 3. Data handling (suggested answers)', '');
   const reads = [];
-  if (eff('home-files')) reads.push('files outside the project (home or app-data folders)');
+  if (eff('home-files')) reads.push(eff('home-files').writes ? 'and writes files outside the project (home or app-data folders)' : 'files outside the project (home or app-data folders)');
   if (facts.chat?.length) reads.push('Claude Code session data (see the 1G finding)');
   out.push(`**Reads or stores personal data:** DRAFT — ${reads.length ? 'Yes, on the user\'s computer only' : 'No'}.`);
   out.push(fence(reads.length
@@ -149,7 +149,7 @@ export function renderSheet(meta, facts) {
 
 function writesSummary(eff) {
   const w = [];
-  if (eff('home-files')) w.push('files in its own folder under the user\'s home or app-data directory');
+  if (eff('home-files')?.writes) w.push('files in its own folder under the user\'s home or app-data directory');
   if (eff('temp')) w.push('temporary files');
   if (eff('registry')) w.push('a registry value');
   if (eff('shortcut')) w.push('a shortcut');

@@ -196,7 +196,7 @@ function guard(F, name, fn, fallback) {
 
 // The output folder must not be (or contain) a link, and the default one must not be committed.
 function prepareOut(outDir, isDefault, repoRoot, tree) {
-  if (isDefault && tree.some(e => e.path === '.plugin-check' || e.path.startsWith('.plugin-check/')))
+  if (isDefault && tree.some(e => { const p = e.path.toLowerCase(); return p === '.plugin-check' || p.startsWith('.plugin-check/'); }))
     throw new Error('.plugin-check is committed in this repo; pass --out <folder> to write the report somewhere else');
   const chain = isDefault ? [outDir] : [];
   for (const p of chain) { try { if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`${p} is a link; pass --out <folder>`); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
@@ -206,6 +206,8 @@ function prepareOut(outDir, isDefault, repoRoot, tree) {
   return name => {
     const p = path.join(outDir, name);
     try { if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`${p} is a link; refusing to write through it`); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    // Remove the old file first, so a hard link planted there is broken rather than written through.
+    try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     return p;
   };
 }
@@ -234,8 +236,17 @@ function runWith(opts, repoRoot, commit, mirror) {
   if (fs.existsSync(infoAttr) && fs.readFileSync(infoAttr, 'utf8').replace(/#.*/g, '').trim())
     notes.push('This clone has its own .git/info/attributes. GitHub doesn\'t, so the archive check ignores it; your local checkouts may still differ.');
   // The GitHub-like archive is what the checks read.
-  const tarBuf = G.archive(mirror, commit);
-  let files = new Map(readTar(tarBuf).filter(e => e.type === 'file').map(e => [e.path, { data: e.data, mode: e.mode }]));
+  // If git archive itself fails (for example a path Windows can't represent), read the stored
+  // files instead, so the report still runs and says why.
+  let tarBuf, files;
+  try {
+    tarBuf = G.archive(mirror, commit);
+    files = new Map(readTar(tarBuf).filter(e => e.type === 'file').map(e => [e.path, { data: e.data, mode: e.mode }]));
+  } catch (e) {
+    F.add('FAIL', 'EOL-ARCHIVE', 'git archive failed on this repo', { detail: `${e.message}\nThe checks below read the stored files directly. A path Windows or macOS can't hold is the usual cause (see LAYOUT-NAME).`, portal: 'Validation stops' });
+    tarBuf = Buffer.alloc(0);
+    files = new Map(blobEntries.map(be => [be.path, { data: blobs.get(be.sha), mode: parseInt(be.mode, 8) }]));
+  }
   const archiveFiles = files;
   // Working tree versus the commit, compared by reading the files (git diff could run a clean filter).
   const autocrlf = G.configGet(repoRoot, 'core.autocrlf'), eol = G.configGet(repoRoot, 'core.eol');
@@ -275,6 +286,7 @@ function runWith(opts, repoRoot, commit, mirror) {
     else if (Number(n) > 0) { unpushed = Number(n); F.add('WARN', 'GIT-UNPUSHED', `${n} commit(s) not pushed to origin/${branch}`, { detail: 'The portal validates what is on GitHub.' }); }
   }
   const identities = G.historyIdentities(mirror, commit);
+  const messages = G.historyMessages(mirror, commit);
   let addedLines = G.historyAddedLines(mirror, commit);
   if (addedLines == null) { F.add('WARN', 'HISTORY-SKIPPED', 'Couldn\'t read the full history, so earlier commits weren\'t checked for emails and private terms', { detail: 'The history is too large to read in one go. Check it with your own tools before the repo goes public.' }); addedLines = []; }
   const strictTerms = !!opts.privateTerms;
@@ -287,7 +299,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   const ctx = {
     repoRoot, commit, tree, files, archiveFiles, blobs, blobsByPath, pluginDir, attributeTexts, archiveBytes: tarBuf.length,
     localConfig: { autocrlf, eol }, worktreeDiff, remote, ownRepoKey: remote?.ownerRepo ? `github.com/${remote.ownerRepo.toLowerCase()}` : null,
-    listings, identities, addedLines, privateTerms, evidenceIgnore: new Set(allow.filter(e => e.id === 'EVIDENCE' && e.file).map(e => e.file)),
+    listings, identities, messages, addedLines, privateTerms, evidenceIgnore: new Set(allow.filter(e => e.id === 'EVIDENCE' && e.file).map(e => e.file)),
   };
   // Checks. Each group is guarded so malformed input becomes a finding, not a crash.
   guard(F, 'layout', () => C.checkLayout(ctx, F));
@@ -303,6 +315,15 @@ function runWith(opts, repoRoot, commit, mirror) {
   if (opts.validate) guard(F, 'claude plugin validate', () => claudeValidate(files, pluginDir, F));
   F.list.splice(0, F.list.length, ...consolidate(F.list));
   applyAllow(allow, F.list, F);
+  // The allow file belongs to the repo being checked, so every entry is shown, and the report's
+  // header says how many findings it allowed. EVIDENCE entries never remove findings: they show
+  // as ALLOWED, so a reviewer can check the file really is pattern data.
+  if (allow.length) {
+    F.add('INFO', 'ALLOW-FILE', `The repo's .plugin-check-allow.json has ${allow.length} entr${allow.length === 1 ? 'y' : 'ies'}`, { detail: allow.map(e => `${e.id}${e.file ? ' ' + e.file : ''}${e.match ? ` (matching "${e.match}")` : ''}: ${e.reason}`).join('\n'), fix: 'Read every EVIDENCE file yourself: an allow file in a repo you don\'t trust could hide real behaviour.' });
+    const evidenceFiles = allow.filter(e => e.id === 'EVIDENCE').map(e => e.file);
+    for (const ef of evidenceFiles) if (ef && !files.has(ef)) F.add('INFO', 'ALLOW-FILE', `EVIDENCE entry names a file that isn't in the commit: ${ef}`);
+    notes.push(`${F.list.filter(f => f.sev === 'ALLOWED').length} finding(s) allowed by the repo's own .plugin-check-allow.json (${evidenceFiles.length} file(s) marked as pattern data); see ALLOWED and ALLOW-FILE below.`);
+  }
   // Redact every string that came from the repo before anything is written or printed.
   const redact = makeRedactor(privateTerms);
   const findings = F.list.map(f => ({ ...f, title: redact(f.title), detail: redact(f.detail), file: redact(f.file), allowedReason: redact(f.allowedReason) }));
@@ -315,7 +336,8 @@ function runWith(opts, repoRoot, commit, mirror) {
     webTools: /\bWeb(Fetch|Search)\b|web (fetch|search)|search (GitHub|the web)/i.test(skillBodies), licenseFile: [...files.keys()].some(p => /(^|\/)LICEN[SC]E/i.test(p)) }, redact);
   const c = counts(findings);
   const meta = { repoRoot, repoName: path.basename(repoRoot), commit, ref: opts.ref, worktree: opts.worktree, pluginDir, pluginName: redact(manifest?.displayName || manifest?.name),
-    rulesDate: RULES_DATE, notes, remote, branch, unpushed, date: new Date().toISOString().slice(0, 10), counts: c };
+    rulesDate: RULES_DATE, notes: notes.map(redact), remote: remote ? { ...remote, url: redact(remote.url), ownerRepo: redact(remote.ownerRepo) } : null,
+    branch: redact(branch), unpushed, date: new Date().toISOString().slice(0, 10), counts: c };
   const judgement = [
     'REQUIRED, every run: the name and overlap search. Search GitHub, the plugin directory (web) and the web, including community skill directories, for the plugin and skill names and for similar plugins; this script only saw the offline directory copy. Record sources, queries and results first in the Judgement section, with suggested "How it compares" text for the user to paste (never edit the repo).',
     'Policy 2B: does each skill/command description match what it really does, with no promised features it lacks?',
@@ -331,7 +353,7 @@ function runWith(opts, repoRoot, commit, mirror) {
   if (isDefault) fs.writeFileSync(outFile('.gitignore'), '*\n');
   fs.writeFileSync(outFile('report.md'), renderReport(meta, findings, judgement));
   fs.writeFileSync(outFile('submission-sheet.md'), renderSheet(meta, facts));
-  const json = { meta: { ...meta, remote: remote ? { ownerRepo: remote.ownerRepo } : null }, findings,
+  const json = { meta: { ...meta, remote: meta.remote ? { ownerRepo: meta.remote.ownerRepo } : null }, findings,
     facts: redactDeep({ manifest, prompts: readme?.prompts, effects: code.effects, hosts: code.hosts, envReads: code.envReads, skills: components.skills.map(s => ({ path: s.path, name: s.name, description: s.description })) }, redact) };
   fs.writeFileSync(outFile('report.json'), JSON.stringify(json, null, 2));
   return { outDir, counts: c, verdict: verdict(c), findings, meta };

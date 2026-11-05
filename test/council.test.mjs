@@ -164,5 +164,6 @@ test('policy 7: allowed findings and EVIDENCE files don\'t feed the sheet', () =
   const res = check(repo(files));
   const sheet = fs.readFileSync(path.join(res.outDir, 'submission-sheet.md'), 'utf8');
   assert.ok(!/registry/i.test(sheet.split('## 3. Data handling')[1].split('## 4.')[0]));
-  assert.ok(!res.findings.some(f => f.id === 'DISCLOSE' && f.sev !== 'INFO'));
+  assert.ok(!res.findings.some(f => f.id === 'DISCLOSE' && (f.sev === 'FAIL' || f.sev === 'WARN')));
+  assert.ok(res.findings.some(f => f.id === 'DISCLOSE' && f.sev === 'ALLOWED'), 'pattern-data evidence is shown, as ALLOWED');
 });

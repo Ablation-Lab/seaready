@@ -64,7 +64,8 @@ export const LEAK_SHAPES = [
 // Names that only look like credentials. The directory's scan held two of our plugins for these
 // (a lock ID and some short token-counting names); renaming cleared the hold. WARN only.
 // The keyword may start the name too (TOKEN_FILE), not only end it.
-export const LOOKALIKE_NAMES = /(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*(TOKEN|Token|SECRET|Secret|PASSWORD|Password|PASSWD|Passwd|APIKEY|ApiKey|API_KEY|apiKey|api_key|CREDENTIAL|Credential|PRIVATE_KEY|privateKey)[A-Za-z0-9_]*\b|\$(key|token|secret|password|pass|cred)\b|\bTok[A-Z]\b/;
+// Also camelCase names that start with the keyword in lower case: tokenCount, secretKey, credentialPath.
+export const LOOKALIKE_NAMES = /(?<![A-Za-z0-9_$])(token|secret|password|passwd|credential|apiKey|privateKey)[A-Z_][A-Za-z0-9_]*|(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*(TOKEN|Token|SECRET|Secret|PASSWORD|Password|PASSWD|Passwd|APIKEY|ApiKey|API_KEY|apiKey|api_key|CREDENTIAL|Credential|PRIVATE_KEY|privateKey)[A-Za-z0-9_]*\b|\$(key|token|secret|password|pass|cred)\b|\bTok[A-Z]\b/;
 
 // Reads of environment variables. Credential-like names are the "Uses a credential from the user's
 // machine" hold; path variables were also part of what cleared Cutproof's holds (use
@@ -111,7 +112,7 @@ export const INJECTION = [
 export const SIDE_EFFECTS = [
   { id: 'network', label: 'network requests',
     code: /\bfetch\s*\(|\bhttps?\.(get|request)\s*\(|XMLHttpRequest|new WebSocket\(|Invoke-WebRequest|Invoke-RestMethod|\b(iwr|irm)\s|Net\.WebClient|\bHttpClient\b|\bcurl(\.exe)?\s|\bwget\s|\brequests\.(get|post|put|delete|request)\(|\burllib\.request|\baxios\b|\bWebRequest\]::/i,
-    readme: /network|fetch(es|ed)?\b|download|\bsends?\b|\brequests?\b|connects? to|web search|online/i },
+    readme: /network|internet|\bfetch(es|ed)?\b|download|\b(sends?|uploads?|posts?)\b[^.]{0,60}\b(to|server|service|api|url|endpoint|host|site)\b|\brequests? (to|from)\b|connects? to|web search|https?:\/\/|online/i },
   { id: 'registry', label: 'Windows registry changes',
     code: /HKCU:|HKLM:|HKEY_(CURRENT_USER|LOCAL_MACHINE)|\breg(\.exe)?\s+(add|delete|import)\b|Registry(Key)?\]?::|Microsoft\.Win32\.Registry|\b(New|Set|Remove)-ItemProperty\b|\bwinreg\b|CurrentVersion\\\\?Run/i,
     readme: /registry|HKCU|HKEY|Run key|\bRun\b value/i },
@@ -135,7 +136,7 @@ export const SIDE_EFFECTS = [
     readme: /delet|remov|clean(s|ed)? up|overwrit/i },
   { id: 'process', label: 'starting other programs',
     code: /\bspawn(Sync)?\s*\(|\bexec(File)?(Sync)?\s*\(|\bStart-Process\b|\bsubprocess\.|\bos\.system\s*\(|Process\.Start\s*\(|\bAdd-Type\b|\b(ffmpeg|ffprobe|node|python3?|git|npm|npx|msedge|chrome)(\.exe)?\b/i,
-    readme: /\bruns?\b|\bstarts?\b|launch|calls?\b|ffmpeg|node|git\b|powershell|python/i },
+    readme: /\bruns?\b[^.]{0,50}(`|\bcommand|\bprogram|\bscript|\bnode\b|\bgit\b|powershell|python|ffmpeg|helper)|\bstarts?\b[^.]{0,40}(program|process|app|server|helper)|\blaunch|`(node|git|python3?|powershell|ffmpeg|bash)\b/i },
   { id: 'clipboard-browser', label: 'clipboard or opening a browser',
     code: /Set-Clipboard|\bclip\.exe\b|\s\|\s*clip\s*$|\bpbcopy\b|\bxclip\b|xdg-open|Start-Process\s+['"]?https?:|\bopen\s+['"]?https?:|webbrowser\.open/i,
     readme: /clipboard|browser|opens? (a |the )?(page|link|url)/i },
@@ -171,7 +172,10 @@ export const UNSUPPORTED = [
 ];
 
 export const PERSONAL_WEBMAIL = /^(gmail\.com|googlemail\.com|outlook\.com|hotmail\.[a-z.]+|live\.[a-z.]+|msn\.com|yahoo\.[a-z.]+|ymail\.com|icloud\.com|me\.com|mac\.com|aol\.com|proton(mail)?\.(me|com|ch)|pm\.me|gmx\.[a-z.]+|mail\.com|yandex\.[a-z]+|zoho\.com|fastmail\.[a-z]+|hey\.com|qq\.com|163\.com)$/i;
-export const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+// Bounded parts, so a long run of letters with no @ can't make the scan slow.
+export const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/g;
+// Calls that write files (to tell a home-folder read from a write).
+export const WRITE_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|createWriteStream|mkdir(Sync)?|copyFile(Sync)?|rename(Sync)?|Set-Content|Out-File|Add-Content|New-Item|Copy-Item|Move-Item|File\.(Write|Copy|Move|Create)|Directory\.Create)\b|\bopen\([^)]*['"][wa]/;
 // Addresses that are fine to publish.
 export const SAFE_EMAIL = /@users\.noreply\.github\.com$|^noreply@anthropic\.com$|^noreply@github\.com$|@example\.(com|org|net|invalid|test)$|\.(invalid|test|example|localhost)$|@example$|@test$|@localhost$|@users\.noreply\.gitlab\.com$|^git@github\.com$/i;
 // Placeholder user names that are fine in docs.

@@ -52,7 +52,8 @@ export function oneLine(s, max = 300) {
 
 // For Markdown headings, list titles and table cells.
 export function mdInline(s, max = 300) {
-  return oneLine(s, max).replace(/[\\`*_[\]<>|#~]/g, c => '\\' + c);
+  // & too, so an HTML entity such as &rlm; can't render as an invisible character.
+  return oneLine(s, max).replace(/[\\`*_[\]<>|#~&]/g, c => '\\' + c);
 }
 
 // A fenced code block that the content can't close early. indent is added to every line.

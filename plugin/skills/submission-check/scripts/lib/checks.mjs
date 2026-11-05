@@ -242,7 +242,9 @@ export function checkManifest(ctx, F) {
     if (parts.length && parts.every(p => R.GENERIC_WORDS.has(p)))
       F.add('WARN', 'MANIFEST-GENERIC', 'Plugin name is made only of generic words', { file: pj, detail: name, portal: 'Held for a reviewer ("Name may be confused with an existing listing")' });
     // Clashes with existing listings.
-    if (!listings.items.length) F.add('WARN', 'NAME-CLASH', 'Couldn\'t check name clashes: no local copy of the directory', { detail: 'Open /plugin in Claude Code (Discover / directory) once to refresh ~/.claude/plugins/plugin-directory-cache-v2.json, then run again.' });
+    const haveDirectory = listings.sources.some(s => s.fetchedAt);
+    if (!haveDirectory) F.add('WARN', 'NAME-CLASH', 'Couldn\'t check the directory for name clashes: no local copy of it', { detail: `Open /plugin in Claude Code (Discover / directory) once to refresh ~/.claude/plugins/plugin-directory-cache-v2.json, then run again.${listings.items.length ? ' Only marketplaces you have added were checked.' : ''}` });
+    if (!listings.items.length) { /* nothing to compare with */ }
     else {
       const { exact, similar } = findClashes(listings, { name, displayName: m.displayName }, ownRepoKey);
       const src = listings.sources.find(s => s.fetchedAt);
@@ -254,7 +256,7 @@ export function checkManifest(ctx, F) {
       if (inMarketplaces.length) F.add('INFO', 'NAME-MARKETPLACE', 'A marketplace you\'ve added lists this name', { file: pj, detail: inMarketplaces.slice(0, 5).map(x => `${x.name || x.displayName} in ${x.origin}`).join('; ') + '. If it is your own marketplace, this is expected; otherwise check it is not someone else\'s plugin.' });
       const others = similar.filter(s => !s.own);
       if (others.length) F.add('WARN', 'NAME-SIMILAR', 'Name looks like existing listings', { file: pj, detail: others.slice(0, 6).map(x => `${x.name || x.displayName} [${x.how}]`).join('; ') + asOf, portal: 'Held for a reviewer if look-alike ("Name may be confused with an existing listing")' });
-      if (!inDirectory.length && !others.length) F.add('PASS', 'NAME-CLASH', 'No other directory listing uses this name or a look-alike', { detail: `Checked against ${listings.items.length} listings${asOf}. Plugins that aren't listed (for example on GitHub) aren't covered here; the skill searches for those in its judgement step.` });
+      if (haveDirectory && !inDirectory.length && !others.length) F.add('PASS', 'NAME-CLASH', 'No other directory listing uses this name or a look-alike', { detail: `Checked against ${listings.items.length} listings${asOf}. Plugins that aren't listed (for example on GitHub) aren't covered here; the skill searches for those in its judgement step.` });
       if (similar.some(s => s.own)) F.add('INFO', 'NAME-OWN', 'This repository already has a listing in the directory', { detail: similar.filter(s => s.own).map(s => s.name || s.displayName).join(', ') });
       const overlaps = findOverlaps(listings, `${m.displayName || ''} ${m.description || ''}`).filter(o => !(ownRepoKey && o.repo?.toLowerCase().includes(ownRepoKey)));
       if (overlaps.length) F.add('INFO', 'OVERLAP', 'Listings with similar descriptions (policy 2C: descriptions must not create confusion with other listings)', { detail: overlaps.map(o => `${o.displayName || o.name} — ${o.summary.slice(0, 110)}`).join('\n'), policy: '2C', fix: 'Say in the README how yours differs ("How it compares").' });
@@ -273,6 +275,7 @@ export function checkManifest(ctx, F) {
   // Component paths stay inside the plugin.
   for (const k of R.COMPONENT_KEYS) {
     const v = m[k];
+    if (v != null && typeof v !== 'string' && typeof v !== 'object') F.add('FAIL', 'MANIFEST-TYPE', `"${k}" in plugin.json must be a path, a list or an object`, { file: pj, detail: `It is ${typeof v}.`, portal: 'Blocks (schema)' });
     const paths = typeof v === 'string' ? [v] : Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
     for (const p of paths) if (/^(\.\.[\\/]|\/|[A-Za-z]:)/.test(p) || /[\\/]\.\.[\\/]/.test(p)) F.add('FAIL', 'MANIFEST-PATH', `${k} path points outside the plugin folder`, { file: pj, detail: p, portal: 'Blocks' });
   }
@@ -321,6 +324,10 @@ export function checkManifest(ctx, F) {
     if (mp && (typeof mp !== 'object' || !Array.isArray(mp.plugins))) { F.add('FAIL', 'MARKETPLACE', 'marketplace.json needs a "plugins" list', { file: mpPath }); mp = null; }
     if (mp) {
       facts.marketplace = mp;
+      mp.plugins.forEach((e, k) => {
+        if (!e || typeof e !== 'object' || Array.isArray(e)) F.add('FAIL', 'MARKETPLACE', `marketplace.json plugins[${k}] is not an object`, { file: mpPath });
+        else if (typeof e.name !== 'string' || (typeof e.source !== 'string' && (typeof e.source !== 'object' || !e.source))) F.add('FAIL', 'MARKETPLACE', `marketplace.json plugins[${k}] needs a "name" and a "source"`, { file: mpPath, detail: JSON.stringify(e).slice(0, 160) });
+      });
       const entry = mp.plugins.find(p => p && p.name === name);
       if (mp.plugins.length > 1) F.add('INFO', 'MARKETPLACE', 'The marketplace lists several plugins: submit each plugin folder on its own', { file: mpPath });
       if (!entry) F.add('WARN', 'MARKETPLACE', `marketplace.json has no entry named "${name}"`, { file: mpPath });
@@ -387,14 +394,16 @@ export function checkComponents(ctx, F) {
   if (!skills.length && !commands.length && !agents.length && !files.has(base + 'hooks/hooks.json') && !files.has(base + '.mcp.json'))
     F.add('WARN', 'COMPONENTS', 'The plugin folder has no skills, commands, agents, hooks or MCP servers', { detail: 'Check the plugin path.' });
   const out = { skills: [], commands: [], agents: [] };
-  for (const p of skills) out.skills.push(checkSkill(p, files.get(p).data.toString('utf8'), F));
-  for (const p of commands) out.commands.push(checkCommandOrAgent(p, files.get(p).data.toString('utf8'), F, 'command'));
-  for (const p of agents) out.agents.push(checkCommandOrAgent(p, files.get(p).data.toString('utf8'), F, 'agent'));
+  // Each file on its own, so one malformed file doesn't stop the checks of the others.
+  const one = (p, fn) => { try { return fn(); } catch (e) { F.add('FAIL', 'CHECK-ERROR', 'A component file stopped its checks on unexpected input', { file: p, detail: e.message }); return null; } };
+  for (const p of skills) { const r = one(p, () => checkSkill(p, files.get(p).data.toString('utf8'), F)); if (r) out.skills.push(r); }
+  for (const p of commands) { const r = one(p, () => checkCommandOrAgent(p, files.get(p).data.toString('utf8'), F, 'command')); if (r) out.commands.push(r); }
+  for (const p of agents) { const r = one(p, () => checkCommandOrAgent(p, files.get(p).data.toString('utf8'), F, 'agent')); if (r) out.agents.push(r); }
   // Hooks and MCP.
   const hooksPath = base + 'hooks/hooks.json';
-  if (files.has(hooksPath)) out.hooks = checkHooks(hooksPath, files.get(hooksPath).data.toString('utf8'), F, !!pluginDir);
+  if (files.has(hooksPath)) out.hooks = one(hooksPath, () => checkHooks(hooksPath, files.get(hooksPath).data.toString('utf8'), F, !!pluginDir));
   const mcpPath = base + '.mcp.json';
-  if (files.has(mcpPath)) out.mcp = checkMcp(mcpPath, files.get(mcpPath).data.toString('utf8'), F, ctx);
+  if (files.has(mcpPath)) out.mcp = one(mcpPath, () => checkMcp(mcpPath, files.get(mcpPath).data.toString('utf8'), F, ctx));
   if ([...files.keys()].some(p => p.startsWith(base + 'bin/'))) { out.bin = true; F.add('INFO', 'BIN', 'Top-level bin/ folder: chat and Cowork refuse to install the plugin; Claude Code only', { portal: 'Listed for Claude Code only' }); }
   return out;
 }
@@ -478,22 +487,43 @@ function checkInstructionBody(p, body, startLine, F) {
   if (m2) F.add('WARN', 'OTHER-TOOLS', 'Instructions tell Claude not to use other tools', { file: p, line: startLine + lineOf(body, m2.index) - 1, policy: '2E', detail: m2[0] });
 }
 
+// Package launchers (npx, uvx, bunx, pnpm dlx, yarn dlx, pipx run, uv run): unpinned blocks,
+// pinned is held. Returns true if the command uses one.
+function launcherFinding(c, what, file, F) {
+  if (!/^\s*(npx|uvx|bunx)(\.cmd)?\b|\b(pnpm|yarn) dlx\b|\bpipx run\b|\buv run\b|(^|\s)(npx|uvx|bunx)\s/.test(c)) return false;
+  const pinned = /@\d+\.\d+\.\d+(\s|$)|==\d+\.\d+\.\d+|--locked|--frozen/.test(c);
+  F.add(pinned ? 'WARN' : 'FAIL', 'LAUNCHER', pinned ? `${what} runs a pinned package from a registry` : `${what} runs an unpinned package`, { file, detail: c, portal: pinned ? 'Held for a reviewer ("Runs a pinned npx or uvx package")' : 'Blocks ("Unpinned npx/uvx launcher")', fix: pinned ? 'Bundle the package\'s code to avoid the hold.' : 'Pin an exact version (pkg@1.2.3, pkg==1.2.3) or use uv run --locked.' });
+  return true;
+}
+
 function checkHooks(p, text, F, subfolder) {
   let h;
   try { h = JSON.parse(text); } catch (e) { F.add('FAIL', 'HOOKS', 'hooks.json is invalid', { file: p, detail: e.message, portal: 'Blocks' }); return null; }
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(h)) { F.add('FAIL', 'HOOKS', 'hooks.json must be a JSON object', { file: p, portal: 'Blocks' }); return null; }
   if (!h.hooks && !h.modules) F.add('FAIL', 'HOOKS', 'hooks.json needs a top-level "hooks" object (or "modules" for a mod)', { file: p, portal: 'Blocks' });
+  if (h.hooks != null && !isObj(h.hooks)) { F.add('FAIL', 'HOOKS', '"hooks" in hooks.json must be an object of events', { file: p, portal: 'Blocks' }); return null; }
   const cmds = [];
   for (const [ev, groups] of Object.entries(h.hooks || {})) {
     if (!R.HOOK_EVENTS.has(ev)) F.add('WARN', 'HOOKS', `Unknown hook event "${ev}"`, { file: p, detail: 'Check the spelling against the hooks reference; unknown events block.', portal: 'Blocks if not a real event' });
-    for (const g of Array.isArray(groups) ? groups : []) for (const hk of g.hooks || []) {
-      if (hk.type === 'http' && !/^https:\/\//.test(hk.url || '')) F.add('FAIL', 'HOOKS', 'HTTP hook URL must be https://', { file: p, portal: 'Blocks' });
-      if (hk.type === 'command' || hk.command) {
-        const c = [hk.command, ...(hk.args || [])].join(' ');
-        cmds.push({ event: ev, command: c });
-        if (subfolder && (/\$\{?(?!CLAUDE_PLUGIN_ROOT\b)[A-Za-z_]/.test(c) || /\$\(|`|\*|\s-c\s/.test(c)))
-          F.add('FAIL', 'HOOKS', 'Hook command uses a variable other than ${CLAUDE_PLUGIN_ROOT}, a substitution, wildcard or inline program', { file: p, detail: c, portal: 'Blocks when the plugin is in a subfolder' });
-        if (R.DOWNLOAD_RUN.some(([re]) => re.test(c)) || /\b(npx|uvx|bunx|pnpm dlx|yarn dlx|pipx run|uv run|npm (i|install)|pip install)\b/.test(c))
-          F.add('WARN', 'HOOKS', 'Hook runs a package launcher or install', { file: p, detail: c, portal: 'Held for a reviewer' });
+    if (!Array.isArray(groups)) { F.add('FAIL', 'HOOKS', `hooks.${ev} must be a list of matcher groups`, { file: p, portal: 'Blocks' }); continue; }
+    for (const g of groups) {
+      if (!isObj(g) || !Array.isArray(g.hooks)) { F.add('FAIL', 'HOOKS', `Each entry in hooks.${ev} must be an object with a "hooks" list`, { file: p, detail: JSON.stringify(g)?.slice(0, 120), portal: 'Blocks' }); continue; }
+      for (const hk of g.hooks) {
+        if (!isObj(hk)) { F.add('FAIL', 'HOOKS', `A hook in hooks.${ev} is not an object`, { file: p, portal: 'Blocks' }); continue; }
+        if (hk.type === 'http' && !/^https:\/\//.test(typeof hk.url === 'string' ? hk.url : '')) F.add('FAIL', 'HOOKS', 'HTTP hook URL must be https://', { file: p, portal: 'Blocks' });
+        if (hk.type === 'command' || hk.command != null) {
+          if (typeof hk.command !== 'string' || (hk.args != null && (!Array.isArray(hk.args) || hk.args.some(a => typeof a !== 'string')))) {
+            F.add('FAIL', 'HOOKS', `A command hook in hooks.${ev} needs "command" as text (and "args" as a list of text)`, { file: p, portal: 'Blocks' }); continue;
+          }
+          const c = [hk.command, ...(hk.args || [])].join(' ');
+          cmds.push({ event: ev, command: c });
+          if (subfolder && (/\$\{?(?!CLAUDE_PLUGIN_ROOT\b)[A-Za-z_]/.test(c) || /\$\(|`|\*|\s-c\s/.test(c)))
+            F.add('FAIL', 'HOOKS', 'Hook command uses a variable other than ${CLAUDE_PLUGIN_ROOT}, a substitution, wildcard or inline program', { file: p, detail: c, portal: 'Blocks when the plugin is in a subfolder' });
+          launcherFinding(c, `hook (${ev})`, p, F);
+          if (R.DOWNLOAD_RUN.some(([re]) => re.test(c)) || /\b(npm (i|install)|pip install)\b/.test(c))
+            F.add('WARN', 'HOOKS', 'Hook downloads or installs packages', { file: p, detail: c, portal: 'Held for a reviewer' });
+        }
       }
     }
   }
@@ -506,8 +536,13 @@ function checkMcp(p, text, F, ctx) {
   try { m = JSON.parse(text); } catch (e) { F.add('FAIL', 'MCP', '.mcp.json can\'t be parsed', { file: p, detail: e.message, portal: 'Blocks' }); return null; }
   const servers = m.mcpServers || m;
   const out = [];
+  let usesLauncher = false;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) { F.add('FAIL', 'MCP', '.mcp.json must hold an object of servers keyed by name', { file: p, portal: 'Blocks' }); return out; }
   for (const [name, s] of Object.entries(servers)) {
-    if (typeof s !== 'object' || !s) continue;
+    if (typeof s !== 'object' || !s || Array.isArray(s)) { F.add('FAIL', 'MCP', `MCP server "${name}" must be an object`, { file: p, portal: 'Blocks' }); continue; }
+    if ((s.command != null && typeof s.command !== 'string') || (s.args != null && (!Array.isArray(s.args) || s.args.some(a => typeof a !== 'string'))) || (s.url != null && typeof s.url !== 'string')) {
+      F.add('FAIL', 'MCP', `MCP server "${name}": command and url must be text, args a list of text`, { file: p, portal: 'Blocks (".mcp.json can\'t be parsed")' }); continue;
+    }
     out.push({ name, ...s });
     if (s.url != null) {
       if (s.url !== '' && !/^(https|wss):\/\//.test(s.url) && !/^\$\{user_config\./.test(s.url)) F.add('FAIL', 'MCP', `MCP server "${name}" URL is not https`, { file: p, detail: s.url, portal: 'Blocks' });
@@ -519,10 +554,9 @@ function checkMcp(p, text, F, ctx) {
     }
     if (s.command) {
       const c = [s.command, ...(s.args || [])].join(' ');
-      if (/^(npx|uvx|bunx)$/.test(s.command) || /\b(pnpm|yarn) dlx\b|\bpipx run\b|\buv run\b/.test(c)) {
-        const pinned = /@\d+\.\d+\.\d+(\s|$)|==\d+\.\d+\.\d+|--locked|--frozen/.test(c);
-        F.add(pinned ? 'WARN' : 'FAIL', 'MCP', pinned ? `MCP server "${name}" runs a pinned package from a registry` : `MCP server "${name}" runs an unpinned package`, { file: p, detail: c, portal: pinned ? 'Held for a reviewer' : 'Blocks ("Unpinned npx/uvx launcher")' });
-      }
+      if (launcherFinding(c, `MCP server "${name}"`, p, F)) usesLauncher = true;
+      if (ctx.pluginDir && (/\$\{?(?!CLAUDE_PLUGIN_ROOT\b)[A-Za-z_]/.test(c) || /\$\(|`|\*/.test(c)))
+        F.add('FAIL', 'MCP', `MCP server "${name}" command uses a variable other than \${CLAUDE_PLUGIN_ROOT}, a substitution or a wildcard`, { file: p, detail: c, portal: 'Blocks when the plugin is in a subfolder' });
       if (/^(sh|bash|cmd|powershell|pwsh)(\.exe)?$/.test(s.command) || (s.args || []).some(a => /^(-c|\/c|-Command|-e|--eval)$/.test(a)) || /^(npm|yarn|pnpm)$/.test(s.command))
         F.add('WARN', 'MCP', `MCP server "${name}" starts through a shell, inline program or package script`, { file: p, detail: c, portal: 'Held for a reviewer ("MCP server command wasn\'t read")' });
       if (/\.(mcpb|dxt)\b/.test(c)) F.add('WARN', 'MCP', `MCP server "${name}" is a bundle`, { file: p, portal: 'Held for a reviewer' });
@@ -530,7 +564,7 @@ function checkMcp(p, text, F, ctx) {
   }
   const base = ctx.pluginDir ? ctx.pluginDir + '/' : '';
   for (const rc of ['.npmrc', 'bunfig.toml', 'uv.toml', '.yarnrc', '.yarnrc.yml', 'pip.conf'])
-    if (ctx.files.has(base + rc)) F.add('WARN', 'MCP', `Package-manager config ${rc} in the plugin`, { file: base + rc, portal: 'Blocks with a launcher; held with an install' });
+    if (ctx.files.has(base + rc)) F.add(usesLauncher ? 'FAIL' : 'WARN', 'MCP', `Package-manager config ${rc} in the plugin`, { file: base + rc, detail: 'If it sets a registry, index, proxy or other package source.', portal: usesLauncher ? 'Blocks (with a launcher)' : 'Held for a reviewer (with a package install)' });
   if (ctx.files.has(base + 'package.json') && ['package-lock.json', 'npm-shrinkwrap.json', 'bun.lock', 'bun.lockb'].some(l => ctx.files.has(base + l)))
     F.add('WARN', 'MCP', 'package.json with a lockfile at the plugin root', { portal: 'Held for a reviewer ("Dependencies install from a lockfile")' });
   return out;
@@ -630,10 +664,17 @@ export function checkCode(ctx, F, readme) {
     if (!isCode && !instr && !/hooks\.json$|\.mcp\.json$/.test(p)) continue;
     const text = f.data.toString('utf8');
     const lines = text.split('\n');
-    // In instruction files only fenced code is behaviour; prose like "never edit settings.json" isn't.
+    // In instruction files, code is behaviour and prose isn't: fenced blocks, indented code and
+    // `inline code` count; "never edit settings.json" in a sentence doesn't.
     const fenced = new Set();
     if (instr) { let open = false; lines.forEach((l, i) => { if (/^\s*(```|~~~)/.test(l)) { open = !open; return; } if (open) fenced.add(i); }); }
-    const asEvidence = i => !ignore.has(p) && (!instr || fenced.has(i));
+    const codeOf = i => {
+      const l = lines[i];
+      if (!instr || fenced.has(i) || /^( {4,}|\t+)(?![-*+]\s|\d+\.\s)\S/.test(l)) return l;
+      return (l.match(/`[^`\n]+`/g) || []).join(' ');
+    };
+    // Files the repo's allow file calls pattern data: their evidence is kept, and shown as ALLOWED.
+    const patternData = ignore.has(p);
     lines.forEach((line, i) => {
       if (line.length > 4096) return;   // minified or generated; the size checks report big files
       const ln = i + 1;
@@ -680,14 +721,16 @@ export function checkCode(ctx, F, readme) {
           break;
         }
       }
-      if (isTest || !asEvidence(i)) return;
-      for (const eff of R.SIDE_EFFECTS) if (eff.code.test(line)) evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140) });
-      for (const m of line.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
+      if (isTest) return;
+      const codeText = codeOf(i);
+      if (!codeText) return;
+      for (const eff of R.SIDE_EFFECTS) if (eff.code.test(codeText)) evidence[eff.id].push({ file: p, line: ln, text: trimmed.slice(0, 140), allowed: patternData });
+      for (const m of codeText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(:\d+)?/gi)) {
         const h = m[1].toLowerCase();
         if (/^(example\.(com|org|net)|localhost|127\.0\.0\.1|schemas?\.[a-z.]+|json-schema\.org|www\.w3\.org)$/.test(h)) continue;
-        if (!hosts.has(h)) hosts.set(h, { file: p, line: ln });
+        if (!hosts.has(h) || (hosts.get(h).allowed && !patternData)) hosts.set(h, { file: p, line: ln, allowed: patternData });
       }
-      if (isCode) for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(line)) chatHits.push({ file: p, line: ln, what, sev, text: trimmed.slice(0, 140), instr });
+      if (isCode) for (const [re, what, sev] of R.CHAT_HISTORY) if (re.test(line)) chatHits.push({ file: p, line: ln, what, sev, text: trimmed.slice(0, 140), instr, allowed: patternData });
     });
   }
   // Environment variable reads.
@@ -700,8 +743,11 @@ export function checkCode(ctx, F, readme) {
     else F.add('WARN', 'ENV-OTHER', `Reads environment variable ${name}`, { file: rs[0].file, line: rs[0].line, detail: at + '. A setting read from the environment (SessionKeeper\'s SESSIONKEEPER_EXE) was part of what the scan held; prefer a fixed location or userConfig, and document it.', fix: 'Document it in the README, or replace it with userConfig.' });
   }
   // Chat history and summaries (1G).
-  const fails = chatHits.filter(h => h.sev === 'FAIL'), warns = chatHits.filter(h => h.sev === 'WARN');
+  const PATTERN_REASON = 'Only in files the repo\'s .plugin-check-allow.json marks as pattern data (EVIDENCE). Read those files to confirm they hold no behaviour.';
+  const allowedChat = chatHits.filter(h => h.allowed);
+  const fails = chatHits.filter(h => h.sev === 'FAIL' && !h.allowed), warns = chatHits.filter(h => h.sev === 'WARN' && !h.allowed);
   const fmt = hs => hs.slice(0, 6).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n');
+  if (allowedChat.length) F.add('ALLOWED', 'CHAT-HISTORY', 'Chat-history patterns in files marked as pattern data', { file: allowedChat[0].file, line: allowedChat[0].line, policy: '1G', detail: fmt(allowedChat), allowedReason: PATTERN_REASON });
   if (fails.length) F.add('FAIL', 'CHAT-HISTORY', 'Reads chat history, transcripts, memory or conversation summaries', { file: fails[0].file, line: fails[0].line, policy: '1G', detail: fmt(fails), fix: 'Policy 1G: software must not query or extract data from Claude\'s memory, chat history or conversation summaries. If this is local-only metadata (e.g. titles) and core to the plugin, say exactly what is read and what never leaves the machine in a "For reviewers" section — and expect a reviewer to decide.' });
   if (warns.length) F.add('WARN', 'CHAT-HISTORY', 'Touches session state or mentions transcripts', { file: warns[0].file, line: warns[0].line, policy: '1G', detail: fmt(warns) + '\nCheck by reading the code: listing running sessions is different from reading what was said in them.' });
   // What the docs say the plugin (or the app it drives) reads.
@@ -725,7 +771,7 @@ export function checkCode(ctx, F, readme) {
   const docFails = docHits.filter(h => h.sev === 'FAIL');
   if (docFails.length && !fails.length) F.add('FAIL', 'CHAT-HISTORY', 'The docs say it reads chat history, transcripts or conversation summaries', { file: docFails[0].file, line: docFails[0].line, policy: '1G', detail: docFails.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nThe code doing it may be outside the plugin folder (an app the plugin starts); its behaviour still counts.', fix: 'Policy 1G forbids querying chat history and conversation summaries (auto-generated titles count). If only local metadata is read and it never reaches Claude, explain exactly that for reviewers — and expect a reviewer decision, possibly a rejection.' });
   else if (docHits.length && !fails.length && !warns.length) F.add('WARN', 'CHAT-HISTORY', 'The docs mention reading Claude Code session data', { file: docHits[0].file, line: docHits[0].line, policy: '1G', detail: docHits.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') });
-  if (!fails.length && !warns.length && !docHits.length) F.add('PASS', 'CHAT-HISTORY', 'No reads of chat history, transcripts, memory or summaries found', { policy: '1G' });
+  if (!fails.length && !warns.length && !docHits.length && !allowedChat.length) F.add('PASS', 'CHAT-HISTORY', 'No reads of chat history, transcripts, memory or summaries found', { policy: '1G' });
   // Companion code outside the plugin folder (e.g. an app the plugin starts). Not shipped, but its
   // behaviour is the plugin's behaviour when the plugin runs it.
   if (base) {
@@ -743,7 +789,7 @@ export function checkCode(ctx, F, readme) {
     if (comp.chat.length) F.add('WARN', 'COMPANION-1G', 'Code outside the plugin folder reads chat history or session summaries', { file: comp.chat[0].file, line: comp.chat[0].line, policy: '1G', detail: comp.chat.slice(0, 4).map(h => `${h.file}:${h.line} (${h.what}) ${h.text}`).join('\n') + '\nIf the plugin starts this code (an app or helper), reviewers will treat it as the plugin\'s behaviour.' });
     for (const [id, ev] of Object.entries(comp.effects)) {
       const eff = R.SIDE_EFFECTS.find(s => s.id === id);
-      const mentioned = eff.readme.test(rtext);
+      const mentioned = disclosed(eff.readme, rtext);
       F.add(mentioned ? 'INFO' : 'WARN', 'COMPANION-EFFECT', `Code outside the plugin folder: ${eff.label}${mentioned ? ' (the plugin README mentions it)' : ' — not in the plugin README'}`, { file: ev[0].file, line: ev[0].line, detail: ev.slice(0, 3).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n') + '\nOnly matters if the plugin starts this code; then disclose it in the plugin README.' });
     }
   }
@@ -751,18 +797,24 @@ export function checkCode(ctx, F, readme) {
   // (rtext is declared at the top of checkCode)
   const effects = [];
   for (const eff of R.SIDE_EFFECTS) {
-    const ev = evidence[eff.id];
+    const all = evidence[eff.id];
+    const ev = all.filter(e => !e.allowed);
+    if (!ev.length && all.length) {
+      F.add('ALLOWED', 'DISCLOSE', `Only in files marked as pattern data: ${eff.label}`, { file: all[0].file, line: all[0].line, policy: '2B, 3C', detail: all.slice(0, 4).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), allowedReason: PATTERN_REASON });
+      continue;
+    }
     if (!ev.length) continue;
-    const mentioned = eff.readme.test(rtext);
-    effects.push({ id: eff.id, label: eff.label, count: ev.length, mentioned, examples: ev.slice(0, 4) });
+    const mentioned = disclosed(eff.readme, rtext);
+    const writes = eff.id === 'home-files' ? ev.filter(e => R.WRITE_CALL.test(e.text)).length : undefined;
+    effects.push({ id: eff.id, label: eff.label, count: ev.length, mentioned, writes, examples: ev.slice(0, 4) });
     const sev = mentioned ? 'INFO' : (['registry', 'shortcut', 'autostart', 'claude-config', 'network', 'home-files'].includes(eff.id) ? 'FAIL' : 'WARN');
     F.add(sev, 'DISCLOSE', `${mentioned ? 'Disclosed' : 'Not found in the README'}: ${eff.label}`, { file: ev[0].file, line: ev[0].line, policy: '2B, 3C', detail: ev.slice(0, 4).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n') + (ev.length > 4 ? `\n(+${ev.length - 4} more)` : ''), portal: mentioned ? null : 'Security scan ("does something the README doesn\'t disclose")', fix: mentioned ? 'Check the README describes this accurately (where, when, how to undo).' : `Describe it in the README's "What it runs, reads and writes" section, or remove it.` });
   }
   // A host in a file that also makes requests (or in instructions Claude follows) may be contacted;
   // a host anywhere else is probably a link in a message.
-  const netFiles = new Set(evidence.network.map(e => e.file));
+  const netFiles = new Set(evidence.network.filter(e => !e.allowed).map(e => e.file));
   for (const [h, at] of hosts) {
-    if (rfull.toLowerCase().includes(h)) continue;
+    if (at.allowed || rfull.toLowerCase().includes(h)) continue;
     const maybeContacted = netFiles.has(at.file) || isInstr(at.file);
     F.add(maybeContacted ? 'WARN' : 'INFO', 'DISCLOSE-HOST', `Host ${h} in the ${maybeContacted ? 'code' : 'text of a message or link'} isn't named in the README`, { file: at.file, line: at.line, policy: '2B, 3F', detail: maybeContacted ? 'List every domain the plugin contacts or tells Claude to fetch.' : 'No request code in this file, so it is probably a link; check it isn\'t contacted.', portal: maybeContacted ? 'Security scan ("Sends data to an undisclosed destination") if contacted' : null });
   }
@@ -770,12 +822,22 @@ export function checkCode(ctx, F, readme) {
     const m = rfull.match(nc.re);
     const after = m ? rfull.slice(m.index + m[0].length, m.index + m[0].length + 60) : '';
     const qualified = /^.{0,40}\b(it didn't|it did not|that it|it doesn't own|other than|except|of its own|outside (its|the)|unless)\b/i.test(after);
-    if (m && !qualified && evidence[nc.effect].length) F.add('WARN', 'CLAIM-CHECK', `README says "${m[0]}" but the code has ${R.SIDE_EFFECTS.find(s => s.id === nc.effect).label}`, { file: readme.path, line: lineOf(rfull, m.index), policy: '2B', detail: evidence[nc.effect].slice(0, 3).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), fix: 'Read the code: either the claim needs a qualifier (e.g. "the plugin… ; the app it opens…") or the code is wrong.' });
+    if (m && !qualified && evidence[nc.effect].some(e => !e.allowed)) F.add('WARN', 'CLAIM-CHECK', `README says "${m[0]}" but the code has ${R.SIDE_EFFECTS.find(s => s.id === nc.effect).label}`, { file: readme.path, line: lineOf(rfull, m.index), policy: '2B', detail: evidence[nc.effect].slice(0, 3).map(e => `${e.file}:${e.line}  ${e.text}`).join('\n'), fix: 'Read the code: either the claim needs a qualifier (e.g. "the plugin… ; the app it opens…") or the code is wrong.' });
   }
   // Unsupported use cases (4).
   const allText = `${rfull}\n${ctx.manifest?.description || ''}`;
   for (const [re, what] of R.UNSUPPORTED) { const m = allText.match(re); if (m) F.add('INFO', 'POLICY-4', `Mentions something in an unsupported category: ${what}`, { policy: '4', detail: `"${m[0]}" — only a prompt to check; most mentions are harmless.` }); }
-  return { effects, hosts: [...hosts.keys()], envReads: [...byName.keys()] };
+  return { effects, hosts: [...hosts].filter(([, at]) => !at.allowed).map(([h]) => h), envReads: [...byName.keys()] };
+}
+
+// True if some sentence in text matches re without a denial before the match:
+// "makes no network requests" and "never sends anything" don't disclose network use.
+export function disclosed(re, text) {
+  return String(text || '').split(/(?<=[.!?])\s+|\n/).some(s => {
+    const m = s.match(re);
+    if (!m) return false;
+    return !/\b(never|not|no|doesn't|does not|don't|without|nothing|none|nor)\b/i.test(s.slice(0, m.index));
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -817,6 +879,8 @@ export function checkUnicode(ctx, F) {
 export function checkPersonal(ctx, F) {
   const { files, identities, addedLines, privateTerms } = ctx;
   const emailHits = new Map();
+  const termFiles = new Set();      // "<pattern>|<file>" already reported for the current files
+  let historyFail = false;
   for (const [p, f] of files) {
     if (!isText(f.data)) continue;
     const text = f.data.toString('utf8');
@@ -831,12 +895,39 @@ export function checkPersonal(ctx, F) {
     const lp = text.match(R.LOCAL_USER_PATH);
     if (lp) F.add(R.TEST_PATH.test(p) ? 'INFO' : 'WARN', 'LOCAL-PATH', 'Path with a local user name', { file: p, line: lineOf(text, lp.index), detail: lp[0].replace(/(Users[\\/]+|home\/)([^\\/]{2})[^\\/]*/i, '$1$2…'), fix: 'Use a placeholder like C:\\Users\\<you> or ~.' });
     if (privateTerms.length) {
-      // Line by line, skipping very long lines, so a slow pattern can't stall the run.
+      // Line by line, skipping very long lines, so a slow pattern can't stall the run. In Markdown,
+      // also each paragraph with formatting, comments and line wraps removed, so "Qu**okka**ville"
+      // or a term split across two lines is still found.
       const tl = text.split('\n');
+      const paras = /\.(md|markdown|txt)$/i.test(p)
+        ? text.split(/\n\s*\n/).map(par => par.replace(/<!--[\s\S]*?-->/g, '').replace(/[*_~`]/g, '').replace(/[ \t]*\r?\n[ \t]*/g, ' ')).filter(par => par.length <= 4096)
+        : [];
       for (const t of privateTerms) {
         const k = tl.findIndex(l => l.length <= 4096 && t.re.test(l));
-        if (k >= 0) F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: k + 1, detail: `${t.source} (${t.file})`, fix: 'Remove it.' });
+        if (k >= 0) { F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n})`, { file: p, line: k + 1, detail: `${t.source} (${t.file})`, fix: 'Remove it.' }); termFiles.add(`${t.n}|${p}`); continue; }
+        if (paras.some(par => t.re.test(par))) { F.add('FAIL', 'PRIVATE-TERM', `Private term from your list (pattern ${t.n}), split by formatting or a line break`, { file: p, detail: `${t.source} (${t.file})`, fix: 'Remove it.' }); termFiles.add(`${t.n}|${p}`); }
       }
+    }
+  }
+  // File and folder names.
+  for (const e of ctx.tree || []) {
+    const name = e.path;
+    for (const m of name.matchAll(R.EMAIL)) if (!R.SAFE_EMAIL.test(m[0])) F.add(R.PERSONAL_WEBMAIL.test(m[0].split('@')[1]) ? 'FAIL' : 'WARN', 'EMAIL-FILE', 'Email address in a file or folder name', { file: name, detail: maskEmail(m[0]) });
+    for (const t of privateTerms) if (t.re.test(name)) F.add('FAIL', 'PRIVATE-TERM', `Private term (pattern ${t.n}) in a file or folder name`, { file: name, detail: `${t.source} (${t.file})`, fix: 'Rename it.' });
+  }
+  // Commit messages (Signed-off-by lines, mentions) stay in history too.
+  const msgSeen = new Set();
+  for (const msg of ctx.messages || []) {
+    for (const m of msg.text.matchAll(R.EMAIL)) {
+      const e = m[0];
+      if (R.SAFE_EMAIL.test(e) || !R.PERSONAL_WEBMAIL.test(e.split('@')[1] || '') || msgSeen.has(e)) continue;
+      msgSeen.add(e);
+      F.add('FAIL', 'EMAIL-HISTORY', 'Personal email in a commit message', { detail: `${maskEmail(e)} in ${msg.sha} (for example a Signed-off-by line)`, fix: 'Rewrite the message (git rebase, or filter-repo for published history).' });
+      historyFail = true;
+    }
+    for (const t of privateTerms) if (!msgSeen.has(`t${t.n}`) && msg.text.split('\n').some(l => l.length <= 4096 && t.re.test(l))) {
+      msgSeen.add(`t${t.n}`);
+      F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in a commit message`, { detail: `in ${msg.sha}`, fix: 'Rewrite the message before the repo goes public.' });
     }
   }
   for (const h of emailHits.values()) {
@@ -851,14 +942,16 @@ export function checkPersonal(ctx, F) {
       if (!e || /@users\.noreply\.github\.com$/i.test(e) || /^noreply@github\.com$/i.test(e)) continue;
       const k = `${role}|${e}`; if (!bad.has(k)) bad.set(k, { role, email: e, commits: [] }); bad.get(k).commits.push(c.sha.slice(0, 7));
     }
-    for (const e of c.coAuthors) if (!R.SAFE_EMAIL.test(e) && R.PERSONAL_WEBMAIL.test(e.split('@')[1] || ''))
+    for (const e of c.coAuthors) if (!R.SAFE_EMAIL.test(e) && R.PERSONAL_WEBMAIL.test(e.split('@')[1] || '')) {
       F.add('FAIL', 'EMAIL-HISTORY', 'Personal email in a Co-authored-by trailer', { detail: `${maskEmail(e)} in ${c.sha.slice(0, 7)}` });
+      historyFail = true;
+    }
   }
   if (bad.size) for (const b of bad.values()) {
     const personal = R.PERSONAL_WEBMAIL.test(b.email.split('@')[1] || '');
     F.add('FAIL', 'EMAIL-HISTORY', `${personal ? 'Personal' : 'Non-noreply'} email as commit ${b.role}`, { detail: `${maskEmail(b.email)} in ${b.commits.length} commit(s): ${b.commits.slice(0, 6).join(', ')}${b.commits.length > 6 ? ' …' : ''}`, fix: 'Set git config user.email to your <id>+<user>@users.noreply.github.com address. Rewriting published history needs care (filter-branch/filter-repo, then force-push).' });
   }
-  else if (identities.length) F.add('PASS', 'EMAIL-HISTORY', 'Every commit uses a GitHub noreply address', { detail: `${identities.length} commits checked.` });
+  else if (identities.length && !historyFail) F.add('PASS', 'EMAIL-HISTORY', 'Every commit uses a GitHub noreply address', { detail: `${identities.length} commits checked (authors, committers, co-authors and messages).` });
   // History content: personal emails and private terms that were removed later still ship on GitHub.
   const seen = new Set();
   for (const l of addedLines) {
@@ -870,8 +963,8 @@ export function checkPersonal(ctx, F) {
       F.add('FAIL', 'EMAIL-HISTORY', 'Personal email in an earlier commit\'s content', { file: l.file, detail: `${maskEmail(e)} added in ${l.sha}; still in the repo's history even though the current files don't have it.`, fix: 'Rewrite history to remove it before the repo goes public.' });
     }
     for (const t of privateTerms) {
-      if (!t.re.test(l.text)) continue;
-      const k = `t|${t.n}|${l.file}`; if (seen.has(k)) continue; seen.add(k);
+      if (l.text.length > 4096 || !t.re.test(l.text)) continue;
+      const k = `t|${t.n}|${l.file}`; if (seen.has(k) || termFiles.has(`${t.n}|${l.file}`)) continue; seen.add(k);
       F.add('FAIL', 'PRIVATE-TERM-HISTORY', `Private term (pattern ${t.n}) in an earlier commit`, { file: l.file, detail: `added in ${l.sha}`, fix: 'Rewrite history to remove it.' });
     }
   }

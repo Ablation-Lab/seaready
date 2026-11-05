@@ -18,8 +18,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const BASE = ['-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=', '-c', 'protocol.allow=never', '-c', 'core.quotePath=false',
+// Every transport protocol is switched off by name as well as in general: a repo's own
+// protocol.<name>.allow outranks protocol.allow, but command-line settings outrank the repo's.
+const PROTOCOLS = ['ext', 'file', 'ssh', 'git', 'http', 'https', 'fd'].flatMap(p => ['-c', `protocol.${p}.allow=never`]);
+const BASE = ['-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=', '-c', 'protocol.allow=never', ...PROTOCOLS, '-c', 'core.quotePath=false',
   '-c', 'log.showSignature=false', '-c', 'gpg.program=false', '-c', 'core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null')];
+// No lazy fetch of missing objects (a partial clone's promisor remote could name any program),
+// and never a credential or password prompt.
+const SAFE_ENV = { GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' };
 
 export class GitError extends Error {}
 
@@ -36,7 +42,7 @@ function run(args, { encoding = 'utf8', allowFail = false, input, env } = {}) {
       encoding: encoding === 'buffer' ? undefined : 'utf8',
       maxBuffer: 1024 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
-      input, env: env || process.env, cwd: emptyCwd(), windowsHide: true,
+      input, env: { ...(env || process.env), ...SAFE_ENV }, cwd: emptyCwd(), windowsHide: true,
     });
   } catch (e) {
     if (allowFail) return null;
@@ -132,6 +138,12 @@ export function historyIdentities(m, commit) {
     rows.push({ sha, author: ae, committer: ce, coAuthors: coEmails });
   }
   return rows;
+}
+
+// Commit messages (subject and body) across history: [{ sha, text }].
+export function historyMessages(m, commit) {
+  const out = m.git(['log', '--no-show-signature', '--format=%h%x1f%B%x1d', commit], { allowFail: true }) || '';
+  return out.split('\x1d').map(r => r.replace(/^\s+/, '')).filter(Boolean).map(r => { const [sha, text] = r.split('\x1f'); return { sha, text: text || '' }; });
 }
 
 // Every line added anywhere in history reachable from the commit (for leaks removed later).
